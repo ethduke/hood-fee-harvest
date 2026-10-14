@@ -1,0 +1,28 @@
+Node.js 24.4 or newer.
+
+Install: npm ci --ignore-scripts
+Local preview: npm run dev
+Production server: npm run build, then npm start
+Verification: npm test && npm run typecheck && npm run build
+Public repository check: npm run check:public
+
+Optional server settings are described in .env.example. Put real values in an
+ignored .env.local for local development or in your hosting provider's secret
+manager. Never use a NEXT_PUBLIC variable for provider URLs or keys.
+
+Wallet queries use same-origin POST requests. The application does not persist
+wallet queries, use browser storage, add addresses to URLs, or log request bodies,
+provider responses, error stacks, or credentials. Hosting providers may maintain
+infrastructure access logs; configure those independently and disable body tracing.
+
+Historical scans are resumable and bounded. Keep SCAN_CURSOR_SECRET stable across
+server instances for cursor continuity. Results are taken at a fixed confirmed
+block and discarded if its hash changes. An incomplete scan never means zero fees.
+
+Coverage in this first release: O1 current, Tax and historical fee escrows; the
+shared Long/Longbow locked-pool manager; pons v2 fee escrow plus curve/hook discovery;
+pons v1 lockers. Migrated Doppler pools and separate Long hook payouts are outside
+coverage. Each source reports its exclusions and scan progress in the interface.
+
+The app only reads the chain; it never connects a signer or submits a claim.
+Run git config core.hooksPath .githooks to enable local pre-commit guards.
