@@ -14,6 +14,8 @@ import {
   X,
   RefreshCw,
   Radar,
+  LayoutGrid,
+  CircleHelp,
 } from "lucide-react";
 import { ClaimController } from "../lib/wallet/claims.mjs";
 import { claimKey } from "../lib/fees/claim-plan.mjs";
@@ -122,14 +124,6 @@ function exact(row: FeeRow) {
 }
 const explorer = (type: string, address: string) =>
   `https://robinhoodchain.blockscout.com/${type}/${address}`;
-function ChainGlyph() {
-  return (
-    <span className="chain-glyph">
-      <span />
-      <span />
-    </span>
-  );
-}
 function Brand() {
   return (
     <span className="brand-mark">
@@ -409,10 +403,12 @@ export default function Home() {
             <Brand /><span>hood<span className="brand-sub">FEE HARVEST</span></span>
           </Link>
           <nav className="top-nav" aria-label="Main navigation">
-            <a href="#harvest" className="nav-link active">Dashboard</a>
+            <a href="#harvest" className="nav-link active">Overview</a>
+            <a href="#fees" className="nav-link">Your fees</a>
             <button className="nav-link" onClick={() => setInfo(true)}>Coverage <ArrowUpRight size={13} /></button>
           </nav>
           <div className="topbar-right">
+            <span className="header-network"><span className="green-dot" /> Robinhood Chain</span>
             <div className="wallet-control">
               <button ref={connectRef} className="wallet-connect" disabled={connecting}
                 onClick={() => wallet ? setWalletMenu(true) : connectDefault()}>
@@ -425,60 +421,31 @@ export default function Home() {
             </div>
           </div>
         </header>
-        <main>
+        <div className="terminal-frame">
+          <aside className="terminal-rail" aria-label="Workspace navigation">
+            <a className="rail-item active" href="#harvest" aria-label="Overview"><LayoutGrid size={18} /></a>
+            <a className="rail-item" href="#fees" aria-label="Available fees" onClick={() => setActiveTab("unclaimed")}><Wallet size={18} /></a>
+            <a className="rail-item" href="#fees" aria-label="Payout history" onClick={() => setActiveTab("history")}><History size={18} /></a>
+            <button className="rail-item" aria-label="Reviewed sources" onClick={() => setInfo(true)}><ShieldCheck size={18} /></button>
+            <span className="rail-caption">YOUR FEES. YOUR CALL.</span>
+            <button className="rail-item rail-help" aria-label="Coverage details" onClick={() => setInfo(true)}><CircleHelp size={18} /></button>
+          </aside>
+        <main id="harvest">
           <section className="page-heading" aria-labelledby="hero-title">
-            <div className="hero-copy">
-              <span className="eyebrow"><span className="green-dot" /> MADE FOR ROBINHOOD CHAIN</span>
-              <h1 id="hero-title">Leave no<br /><span>fees</span> behind<span className="hero-period">.</span></h1>
-              <p>Your launchpad fees, finally in one place.<br />Find what’s unclaimed. Keep track of what’s paid.</p>
-              <div className="hero-steps"><span><b>01</b> Connect</span><ArrowRight size={15} /><span><b>02</b> Discover</span><ArrowRight size={15} /><span><b>03</b> Harvest</span></div>
+            <div>
+              <span className="eyebrow"><span className="green-dot" /> {running ? "SCANNING. DISCOVERING. YOURS." : wallet ? "CONNECTED. DISCOVERED. YOURS." : "YOUR FEES. YOUR CALL."}</span>
+              <h1 id="hero-title">Make every <span>fee count.</span></h1>
+              <p>Your launchpad fees, together at last. Find what’s ready. Follow what’s paid.</p>
             </div>
-            <div className="harvest-art" aria-hidden="true">
-              <div className="art-heading"><span>THE HARVEST ROUTE</span><ArrowUpRight size={20} /></div>
-              <div className="art-route">
-                <div className="art-sources"><span>o1</span><span>long</span><span>pons</span></div>
-                <svg className="route-lines" viewBox="0 0 300 160" fill="none"><path d="M0 26H60Q100 26 110 56L120 80H260M0 80H260M0 134H60Q100 134 110 104L120 80" stroke="currentColor" strokeWidth="1.5" /><path d="m245 65 15 15-15 15" stroke="currentColor" strokeWidth="1.5" /><circle cx="120" cy="80" r="5" fill="currentColor" /></svg>
-                <span className="art-wallet"><Wallet size={32} strokeWidth={1.4} /></span>
-              </div>
-              <div className="art-caption"><strong>Different launchpads.<br /><em>One clear view.</em></strong><span>READ<br />REVIEW<br />CLAIM</span></div>
-              <div className="art-footer"><span className="green-dot" /> REVIEWED CONTRACTS <span>4663 ↗</span></div>
-            </div>
-          </section>
-          <div className="section-heading" id="harvest"><span className="eyebrow">01 / YOUR HARVEST</span><span className="network-tag"><ChainGlyph /> Robinhood Chain <span>Mainnet</span></span></div>
-          <div className="dashboard-grid">
-          <section className="lookup-panel" aria-label="Scan sources">
-            <div className="panel-heading"><span>YOUR SCAN</span><Radar size={18} /></div>
-
-            <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
-              <ShieldCheck size={16} />
-              <div><strong>{connectionNotice}</strong><p>Connect once. We’ll check your selected sources in the background.</p></div>
-            </div>
-            <div className="source-selector">
-              <span>SCAN SOURCES</span>
-              <div>
-                {SOURCE_INFO.map((source) => (
-                  <button
-                    key={source.id}
-                    className={`source-chip ${selected.has(source.id) ? "selected" : ""}`}
-                    aria-pressed={selected.has(source.id)}
-                    disabled={running || claimBusy}
-                    onClick={() => toggleSource(source.id)}
-                  >
-                    <span className={`pad-mark ${source.id}`}>{source.mark}</span>
-                    {source.name}
-                    {selected.has(source.id) && <Check size={12} />}
-                  </button>
-                ))}
-              </div>
-              <button className="text-button coverage-link" onClick={() => setInfo(true)}>
-                What’s covered
-                <ArrowUpRight size={13} />
-              </button>
+            <div className="snapshot-note">
+              <span>{snapshotsMatch ? "CONFIRMED SNAPSHOT" : "ROBINHOOD CHAIN MAINNET"}</span>
+              {snapshotsMatch ? <a href={explorer("block", String(snapshots[0].number))} target="_blank" rel="noreferrer">Block {snapshots[0].number.toLocaleString()} <ArrowUpRight size={11} /></a> : <small>Chain 4663 · 20-block confirmations</small>}
             </div>
           </section>
           <section className="summary-grid" aria-label="Wallet summary">
             <Summary
-              label="AVAILABLE FEES"
+              label="AVAILABLE TO HARVEST"
+              onViewAvailable={() => setActiveTab("unclaimed")}
               values={found}
               wallet={wallet}
               helper={
@@ -525,7 +492,34 @@ export default function Home() {
               </div>
             </div>
           </section>
-          </div>
+          <section className="lookup-panel" aria-label="Scan sources">
+            <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
+              <ShieldCheck size={16} />
+              <div><strong>{connectionNotice}</strong></div>
+            </div>
+            <div className="source-selector">
+              <span>SCAN SOURCES</span>
+              <div>
+                {SOURCE_INFO.map((source) => (
+                  <button
+                    key={source.id}
+                    className={`source-chip ${selected.has(source.id) ? "selected" : ""}`}
+                    aria-pressed={selected.has(source.id)}
+                    disabled={running || claimBusy}
+                    onClick={() => toggleSource(source.id)}
+                  >
+                    <span className={`pad-mark ${source.id}`}>{source.mark}</span>
+                    {source.name}
+                    {selected.has(source.id) && <Check size={12} />}
+                  </button>
+                ))}
+              </div>
+              <button className="text-button coverage-link" onClick={() => setInfo(true)}>
+                What’s covered
+                <ArrowUpRight size={13} />
+              </button>
+            </div>
+          </section>
           {wallet && (
             <section className="scan-strip" aria-live="polite">
               <div>
@@ -590,8 +584,8 @@ export default function Home() {
               {claimState.error === "confirmation_pending" && <button className="secondary-button" onClick={() => void claims.current?.watch()}>Check confirmation</button>}
             </section>
           )}
-          <div className="section-heading results-title"><div><span className="eyebrow">02 / THE DETAILS</span><h2>Every fee. Accounted for.</h2></div><button className="text-button" onClick={() => setInfo(true)}>How it works <ArrowUpRight size={15} /></button></div>
-          <section className="results-panel" aria-label="Fee balances and payout history">
+          <div className="section-heading results-title"><div><h2>Your next harvest.</h2><p>Available balances and a clear record of every payout.</p></div><button className="text-button" onClick={() => setInfo(true)}>What’s covered <ArrowUpRight size={15} /></button></div>
+          <section className="results-panel" id="fees" aria-label="Fee balances and payout history">
             <div className="results-header">
               <div className="tabs" role="tablist" aria-label="Fee results">
                 <button
@@ -833,6 +827,7 @@ export default function Home() {
             <small>Independent tool. No Robinhood or launchpad affiliation.</small>
           </footer>
         </main>
+        </div>
       </div>
       {claimState.phase === "review" && claimState.quote && (
         <WalletDialog titleId="claim-title" closeLabel="Cancel claim review" onClose={() => claims.current?.cancel()}>
@@ -918,12 +913,14 @@ function Summary({
   wallet,
   helper,
   icon,
+  onViewAvailable,
 }: {
   label: string;
   values: FeeRow[];
   wallet: string;
   helper: string;
   icon: React.ReactNode;
+  onViewAvailable?: () => void;
 }) {
   return (
     <div className="summary-card">
@@ -937,11 +934,12 @@ function Summary({
         ) : !values.length ? (
           <span className="muted-number">None found</span>
         ) : (
-          values.slice(0, 2).map((row) => <span key={row.currency}>{exact(row)}</span>)
+          values.slice(0, 2).map((row) => <span key={row.currency} title={`${row.raw} raw units · ${row.currency}`}>{row.metadataVerified ? <>{compactAmount(row.raw, row.decimals)} <small>{row.symbol}</small></> : `${row.raw} raw units`}</span>)
         )}
         {values.length > 2 && <small>+{values.length - 2} other assets</small>}
       </div>
       <p>{helper}</p>
+      {label === "AVAILABLE TO HARVEST" && <a className="harvest-shortcut" href="#fees" onClick={onViewAvailable} aria-label="View claimable fees"><ArrowUpRight size={20} /></a>}
     </div>
   );
 }
