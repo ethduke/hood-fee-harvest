@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { encodeEventTopics, encodeAbiParameters, keccak256, toHex } from "viem";
+import { encodeEventTopics, encodeAbiParameters, keccak256, toHex, toEventSelector } from "viem";
 import {
   beneficiaryFees,
   NATIVE,
@@ -226,7 +226,8 @@ test("range limits reduce the window without skipping failed blocks", async () =
   const result = await scan({ address: wallet, source: "o1" }, { secret, createRpc: () => rpc });
   const state = await open(result.cursor, wallet, "o1", secret);
   assert.equal(state.streams[0].next, state.snapshot.number);
-  assert.equal(state.streams[0].range, 5000);
+  assert.equal(state.streams[0].range, Math.floor((88000000 - O1[0].start + 1) / 8));
+  assert.equal(rpc.record.ranges.length, 3);
   assert.equal(result.coverage.percent, 0);
   assert.equal(result.history.length, 0);
 });
@@ -313,7 +314,7 @@ test("Long release history and current beneficiary balances are separate, share-
   rpc.send = async (method, params) =>
     method !== "eth_getLogs"
       ? original(method, params)
-      : [
+      : Array.isArray(params[0].topics[0]) ? [] : [
           {
             address: LONG.address,
             removed: false,
@@ -329,7 +330,8 @@ test("Long release history and current beneficiary balances are separate, share-
             data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [4n, 8n]),
           },
         ];
-  const result = await scan({ address: wallet, source: "long" }, { secret, createRpc: () => rpc });
+  const first = await scan({ address: wallet, source: "long" }, { secret, createRpc: () => rpc });
+  const result = await scan({ address: wallet, source: "long", cursor: first.cursor }, { secret, createRpc: () => rpc });
   assert.deepEqual(
     result.balances.map((r) => r.raw),
     ["75", "25"],
@@ -341,10 +343,11 @@ test("Long release history and current beneficiary balances are separate, share-
 });
 function ponsRpc(redirectBeforeClaim = false) {
   const rpc = fakeRpc();
-  rpc.call = async (address, abi, name) => {
+  rpc.call = async (address, abi, name, args, block) => {
     if (name === "balanceOf") return 20n;
     if (name === "feeRecipientTokenCount" || name === "deployerTokenCount") return 0n;
-    if (name === "feeRedirects") return wallet;
+    if (name === "feeRedirects") return block === toHex(88000000) ? other : wallet;
+    if (name === "deployer") return other;
     throw new ReadError("read_failed");
   };
   const original = rpc.send;
@@ -368,6 +371,14 @@ function ponsRpc(redirectBeforeClaim = false) {
             },
           ]
         : [];
+    if (filter.topics[0] === toEventSelector(ponsV1Abi.find((e) => e.name === "PositionLocked")))
+      return [{
+        address: PONS_V1.address, removed: false, blockHash: hash,
+        transactionHash: `0x${"55".repeat(32)}`, blockNumber: filter.toBlock, logIndex: "0x0",
+        topics: encodeEventTopics({ abi: ponsV1Abi, eventName: "PositionLocked", args: { token: other, deployer: wallet, dexId: 1n } }),
+        data: encodeAbiParameters([{type:"address"},{type:"uint256"},{type:"address"}], [NATIVE,1n,other]),
+      }];
+    if (filter.topics[0] !== toEventSelector(ponsV1Abi.find((e) => e.name === "FeesClaimed"))) return [];
     return [
       {
         address: PONS_V1.address,
@@ -398,14 +409,7 @@ function ponsRpc(redirectBeforeClaim = false) {
   return rpc;
 }
 test("pons v1 attributes an operator-triggered collection to its historical recipient", async () => {
-  const first = await scan(
-    { address: wallet, source: "pons" },
-    { secret, createRpc: () => ponsRpc() },
-  );
-  const next = await scan(
-    { address: wallet, source: "pons", cursor: first.cursor },
-    { secret, createRpc: () => ponsRpc() },
-  );
+  const next = await finishPons(false);
   assert.deepEqual(
     next.history.map((r) => r.raw),
     ["12", "13"],
@@ -413,13 +417,19 @@ test("pons v1 attributes an operator-triggered collection to its historical reci
   assert.ok(next.history.every((r) => r.destination === wallet));
 });
 test("pons v1 respects redirects before the claim within the same block", async () => {
-  const first = await scan(
-    { address: wallet, source: "pons" },
-    { secret, createRpc: () => ponsRpc(true) },
-  );
-  const next = await scan(
-    { address: wallet, source: "pons", cursor: first.cursor },
-    { secret, createRpc: () => ponsRpc(true) },
-  );
+  const next = await finishPons(true);
   assert.equal(next.history.length, 0);
 });
+async function finishPons(redirect) {
+  let cursor, result;
+  const history = [];
+  for (let page = 0; page < 10; page++) {
+    result = await scan({ address: wallet, source: "pons", ...(cursor ? {cursor} : {}) },
+      { secret, createRpc: () => ponsRpc(redirect) });
+    history.push(...result.history);
+    if (!result.cursor) break;
+    cursor = result.cursor;
+  }
+  assert.equal(result.coverage.complete, true);
+  return {...result, history};
+}

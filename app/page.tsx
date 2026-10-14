@@ -79,7 +79,7 @@ type Result = {
   balances: FeeRow[];
   history: FeeRow[];
   warnings: string[];
-  coverage: { complete: boolean; percent: number; pending: number };
+  coverage: { complete: boolean; percent: number; pending: number; blocksChecked?: number; blocksTotal?: number };
   cursor: string | null;
 };
 type SourceState = {
@@ -259,7 +259,11 @@ export default function Home() {
           const existing = current[id];
           if (existing?.result?.coverage.complete || existing?.error) continue;
           didWork = true;
-          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}: available fees and claimed history. Results appear as they are verified.`);
+          const coverage = existing?.result?.coverage;
+          const progress = coverage?.blocksTotal
+            ? ` ${coverage.blocksChecked?.toLocaleString() ?? 0} of ${coverage.blocksTotal.toLocaleString()} contract-blocks searched.`
+            : " Reading wallet balances and historical events.";
+          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}.${progress}${coverage?.pending ? ` ${coverage.pending} candidate records awaiting verification.` : ""}`);
           controller.current = new AbortController();
           try {
             const response = await fetch("/api/scan", {
@@ -535,6 +539,7 @@ export default function Home() {
                   {notice ||
                     "Balances and payouts use confirmed snapshots. An unfinished scan never means there are no fees."}
                   {` ${available.length} available fee positions · ${claimed.length} verified payouts found.`}
+                  {running && ` ${pct.toFixed(2)}% of event ranges searched · ${included.reduce((n, s) => n + (states[s.id]?.pages ?? 0), 0)} pages checked.`}
                 </p>
               </div>
               <div className="scan-actions">
