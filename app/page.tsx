@@ -16,11 +16,24 @@ import {
   Code2,
   RefreshCw,
   CircleHelp,
-  CornerDownLeft,
   Radar,
 } from "lucide-react";
+import { WalletAdapter } from "../lib/wallet/adapter.mjs";
 import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
-import { compactAmount, normalizeAddress, mergeRows, totals } from "../lib/fees/model.mjs";
+import { compactAmount, mergeRows, totals } from "../lib/fees/model.mjs";
+type WalletOption = { id: string; name: string; rabby: boolean; provider: { request: (input: { method: string }) => Promise<unknown> } };
+type WalletEvent =
+  | { type: "providers"; options: WalletOption[] }
+  | { type: "connecting"; name: string }
+  | { type: "connected"; address: string; name: string; switched: boolean }
+  | { type: "disconnected" }
+  | { type: "error"; code: string };
+const walletErrors: Record<string, string> = {
+  rejected: "Connection cancelled. Connect again when you’re ready.",
+  pending: "A wallet request is already open. Approve or dismiss it in your wallet, then try again.",
+  unavailable: "The wallet could not connect. Unlock it and try again.",
+  invalid_account: "The wallet returned an invalid account. Choose another account and reconnect.",
+};
 type FeeRow = {
   id: string;
   source: string;
@@ -112,9 +125,12 @@ function Amount({ row }: { row: FeeRow }) {
   );
 }
 export default function Home() {
-  const [input, setInput] = useState(""),
-    [wallet, setWallet] = useState(""),
-    [validation, setValidation] = useState("");
+  const [wallet, setWallet] = useState("");
+  const [walletName, setWalletName] = useState("");
+  const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
+  const [walletMenu, setWalletMenu] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectionNotice, setConnectionNotice] = useState("Connect your wallet to start an automatic fee scan.");
   const [selected, setSelected] = useState(new Set(SOURCE_INFO.map((s) => s.id))),
     [states, setStates] = useState<Record<string, SourceState>>({});
   const [activeTab, setActiveTab] = useState("unclaimed"),
@@ -127,33 +143,70 @@ export default function Home() {
     generation = useRef(0),
     controller = useRef<AbortController | null>(null),
     latest = useRef(states);
-  const inputRef = useRef<HTMLInputElement>(null);
-  function stop() {
+  const connectRef = useRef<HTMLButtonElement>(null);
+  const adapter = useRef<WalletAdapter | null>(null);
+  const selectedRef = useRef(selected);
+  function cancelWork() {
     active.current = false;
     generation.current++;
     controller.current?.abort();
+  }
+  function stop() {
+    cancelWork();
     setRunning(false);
   }
   useEffect(() => {
-    const hide = () => {
-      if (document.hidden) {
-        active.current = false;
-        controller.current?.abort();
-        setRunning(false);
+    const connection = new WalletAdapter(window, (event: WalletEvent) => {
+      if (event.type === "providers") { setWalletOptions(event.options); return; }
+      if (event.type === "connecting") {
+        stop();
+        publish({});
+        setWallet("");
+        setWalletName(event.name);
+        setConnecting(true);
+        setConnectionNotice(`Approve the connection in ${event.name}. Your fee scan will start automatically.`);
+      } else if (event.type === "connected") {
+        stop();
+        publish({});
+        setWallet(event.address);
+        setWalletName(event.name);
+        setConnecting(false);
+        setWalletMenu(false);
+        setFilter("all");
+        setConnectionNotice(`${event.switched ? "Account changed" : `${event.name} connected`}. Your selected sources are checked automatically.`);
+        if (selectedRef.current.size) void run(event.address, true);
+        else setNotice("Choose at least one scan source to start checking fees.");
+      } else {
+        stop();
+        publish({});
+        setWallet("");
+        setWalletName("");
+        setConnecting(false);
+        setNotice("");
+        setConnectionNotice(event.type === "error" ? walletErrors[event.code] ?? walletErrors.unavailable : "Wallet disconnected. Scanning stopped and results cleared.");
       }
-    };
-    document.addEventListener("visibilitychange", hide);
+    });
+    adapter.current = connection;
+    connection.start();
     return () => {
-      document.removeEventListener("visibilitychange", hide);
-      active.current = false;
-      controller.current?.abort();
+      connection.dispose();
+      adapter.current = null;
+      cancelWork();
     };
+    // Wallet events use current scan state and source selections through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  function connectDefault() {
+    adapter.current?.discoverLegacy();
+    const preferred = adapter.current?.options.find((option) => option.rabby);
+    if (preferred) void adapter.current?.connect(preferred);
+    else setWalletMenu(true);
+  }
   function publish(next: Record<string, SourceState>) {
     latest.current = next;
     setStates(next);
   }
-  async function run(address: string, fresh = false, budget = 24) {
+  async function run(address: string, fresh = false, budget = Number.POSITIVE_INFINITY) {
     stop();
     const token = generation.current;
     active.current = true;
@@ -161,7 +214,7 @@ export default function Home() {
     setNotice("");
     let current: Record<string, SourceState> = fresh ? {} : { ...latest.current };
     if (fresh) publish(current);
-    const ids = SOURCE_INFO.filter((s) => selected.has(s.id)).map((s) => s.id);
+    const ids = SOURCE_INFO.filter((s) => selectedRef.current.has(s.id)).map((s) => s.id);
     let page = 0;
     try {
       while (active.current && token === generation.current && page < budget) {
@@ -171,6 +224,7 @@ export default function Home() {
           const existing = current[id];
           if (existing?.result?.coverage.complete || existing?.error) continue;
           didWork = true;
+          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}: available fees and claimed history. Results appear as they are verified.`);
           controller.current = new AbortController();
           try {
             const response = await fetch("/api/scan", {
@@ -240,10 +294,15 @@ export default function Home() {
         if (active.current && page < budget)
           await new Promise((resolve) => setTimeout(resolve, 350));
       }
-      if (page >= budget && active.current)
-        setNotice(
-          "This pass is finished. Continue scanning to discover older positions and payouts.",
-        );
+      if (active.current && token === generation.current) {
+        const failed = ids.some((id) => current[id]?.error);
+        const finished = ids.length > 0 && ids.every((id) => current[id]?.result?.coverage.complete && !current[id]?.error);
+        setNotice(failed
+          ? "Some sources could not be read. Verified results are kept; unread fees remain unknown. Continue to retry."
+          : finished
+            ? "Scan complete for the selected contracts. Your available fees and claimed history are ready."
+            : "This scan pass is finished. Continue to discover older positions and payouts.");
+      }
     } finally {
       if (token === generation.current) {
         active.current = false;
@@ -251,47 +310,22 @@ export default function Home() {
       }
     }
   }
-  function lookup(event: React.FormEvent) {
-    event.preventDefault();
-    if (!selected.size) {
-      setValidation("Choose at least one launchpad.");
-      return;
-    }
-    try {
-      const address = normalizeAddress(input);
-      setValidation("");
-      setWallet(address);
-      setFilter("all");
-      void run(address, true, 1);
-    } catch {
-      setValidation(errors.invalid_address);
-    }
-  }
   function continueScan() {
     const cleaned = Object.fromEntries(
-      Object.entries(latest.current).map(([id, s]) => [id, { ...s, error: undefined }]),
+      Object.entries(latest.current).map(([id, state]) => [id, { ...state, error: undefined }]),
     );
     publish(cleaned);
     void run(wallet, false);
   }
-  function changeInput(value: string) {
-    if (wallet) {
-      stop();
-      setWallet("");
-      publish({});
-      setNotice("");
-    }
-    setInput(value);
-    setValidation("");
-  }
   function toggleSource(id: string) {
     if (running) return;
-    setSelected((old) => {
-      const next = new Set(old);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    const next = new Set(selectedRef.current);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedRef.current = next;
+    setSelected(next);
+    if (wallet && next.size) void run(wallet);
+    else if (wallet) { stop(); setNotice("Choose at least one scan source to start checking fees."); }
   }
   const included = SOURCE_INFO.filter((s) => selected.has(s.id));
   const allBalances = included.flatMap((s) => states[s.id]?.balances ?? []);
@@ -301,7 +335,7 @@ export default function Home() {
     .flatMap((s) => states[s.id]?.history ?? [])
     .sort((a, b) => (b.block ?? 0) - (a.block ?? 0));
   const complete =
-    wallet &&
+    wallet && included.length > 0 &&
     included.every((s) => states[s.id]?.result?.coverage.complete && !states[s.id]?.error);
   const historyIncomplete = included.some((s) =>
     states[s.id]?.result?.warnings.includes("archive_required"),
@@ -336,7 +370,7 @@ export default function Home() {
           className="nav-item active"
           onClick={() => {
             setInfo(false);
-            inputRef.current?.focus();
+            connectRef.current?.focus();
           }}
         >
           <Layers3 size={18} />
@@ -373,6 +407,16 @@ export default function Home() {
             Workspace <span>/</span> <strong>Fee dashboard</strong>
           </span>
           <div className="topbar-right">
+            <div className="wallet-control">
+              <button ref={connectRef} className="wallet-connect" disabled={connecting}
+                onClick={() => wallet ? setWalletMenu(true) : connectDefault()}>
+                {connecting ? <span className="spinner" /> : <Wallet size={16} />}
+                <span>{connecting ? "Connecting…" : wallet ? `${walletName} · ${short(wallet)}` : "Connect Rabby"}</span>
+              </button>
+              <button className="wallet-choose" aria-label="Choose wallet or disconnect" onClick={() => setWalletMenu(true)}>
+                <ChevronDown size={14} />
+              </button>
+            </div>
             <span className="read-only">
               <ShieldCheck size={13} />
               Read only
@@ -396,7 +440,7 @@ export default function Home() {
               </h1>
               <p>
                 Find unclaimed launchpad fees and follow every verified payout.
-                <br className="desktop-break" /> Just enter an address. No wallet connection needed.
+                <br className="desktop-break" /> Connect your wallet. Your fee scan starts automatically.
               </p>
             </div>
             <div className="hero-emblem" aria-hidden="true">
@@ -408,40 +452,11 @@ export default function Home() {
               <span className="emblem-caption">ONCHAIN. ACCOUNTED FOR.</span>
             </div>
           </div>
-          <section className="lookup-panel" aria-label="Wallet lookup">
-            <form onSubmit={lookup}>
-              <label htmlFor="wallet-address">Wallet address</label>
-              <div className="lookup-row">
-                <Wallet size={19} />
-                <input
-                  id="wallet-address"
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => changeInput(e.target.value)}
-                  placeholder="Enter a wallet address · 0x…"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  aria-describedby={validation ? "validation" : "privacy-note"}
-                  aria-invalid={!!validation}
-                />
-                <button className="primary-button" disabled={running || !selected.size}>
-                  {running ? <span className="spinner" /> : <Search size={16} />}Find my fees
-                  <ArrowRight size={16} />
-                </button>
-              </div>
-              {validation ? (
-                <p id="validation" className="validation" role="alert">
-                  {validation}
-                </p>
-              ) : (
-                <p id="privacy-note" className="privacy-note">
-                  <ShieldCheck size={13} />
-                  Your address stays out of URLs and browser storage. Reads go to the chain
-                  provider.
-                </p>
-              )}
-            </form>
+          <section className="lookup-panel" aria-label="Scan sources">
+            <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
+              <ShieldCheck size={16} />
+              <div><strong>{connectionNotice}</strong><p>Address access only. No signatures or transactions. Your address stays out of URLs and browser storage.</p></div>
+            </div>
             <div className="source-selector">
               <span>SCAN SOURCES</span>
               <div>
@@ -507,7 +522,7 @@ export default function Home() {
               <p>
                 {wallet
                   ? `${included.length} source groups · ${included.reduce((n, s) => n + (states[s.id]?.pages ?? 0), 0)} pages checked`
-                  : "Choose a wallet to start scanning"}
+                  : "Connect your wallet to start scanning"}
               </p>
               <div className="mini-progress">
                 <span style={{ width: `${pct}%` }} />
@@ -520,19 +535,20 @@ export default function Home() {
                 <span className={running ? "pulse-dot" : "green-dot"} />
                 <strong>
                   {running
-                    ? "Reading the chain…"
+                    ? "Scanning in the background…"
                     : complete
                       ? "Covered contracts scanned"
-                      : "More history to explore"}
+                      : !included.length ? "Choose scan sources" : "Scan paused or needs attention"}
                 </strong>
                 <p>
                   {notice ||
                     "Balances and payouts use confirmed snapshots. An unfinished scan never means there are no fees."}
+                  {` ${available.length} available fee positions · ${claimed.length} verified payouts found.`}
                 </p>
               </div>
               <div className="scan-actions">
                 {running ? (
-                  <button className="secondary-button" onClick={stop}>
+                  <button className="secondary-button" onClick={() => { stop(); setNotice("Scan paused. Your verified results are kept. Continue whenever you are ready."); }}>
                     <Pause size={14} />
                     Pause
                   </button>
@@ -542,11 +558,12 @@ export default function Home() {
                       className="icon-button"
                       title="Refresh all selected sources"
                       aria-label="Refresh all selected sources"
-                      onClick={() => void run(wallet, true, 1)}
+                      disabled={!included.length}
+                      onClick={() => void run(wallet, true)}
                     >
                       <RefreshCw size={16} />
                     </button>
-                    {!complete && (
+                    {!complete && included.length > 0 && (
                       <button className="secondary-button" onClick={continueScan}>
                         Continue scan
                         <ArrowRight size={14} />
@@ -716,15 +733,15 @@ export default function Home() {
                 </h2>
                 <p>
                   {!wallet
-                    ? "Enter a wallet address above to see its available fees\nand a clear history of onchain payouts."
+                    ? "Connect Rabby in the top-right corner. We’ll scan the selected sources\nand show available fees and onchain payout history as results arrive."
                     : complete && !historyIncomplete
                       ? "No matching results in the covered contracts. Check coverage for excluded routes."
                       : "Keep scanning to discover older positions. Unread pages and failed reads remain unknown."}
                 </p>
                 {!wallet && (
-                  <button className="text-button" onClick={() => inputRef.current?.focus()}>
-                    Look up an address
-                    <CornerDownLeft size={13} />
+                  <button className="text-button" onClick={connectDefault} disabled={connecting}>
+                    Connect wallet
+                    <ArrowUpRight size={13} />
                   </button>
                 )}
               </div>
@@ -791,6 +808,20 @@ export default function Home() {
           </footer>
         </main>
       </div>
+      {walletMenu && (
+        <WalletDialog onClose={() => { if (connecting) adapter.current?.disconnect(); setWalletMenu(false); }}>
+
+            <span className="eyebrow">YOUR WALLET</span>
+            <h2 id="wallet-title">Connect to find your fees.</h2>
+            <p>Rabby is the default. Choose an installed wallet to share your account address and start scanning automatically.</p>
+            {!walletOptions.some((option) => option.rabby) && <a className="wallet-option" href="https://rabby.io/" target="_blank" rel="noreferrer"><Wallet size={20} /><span>Get Rabby<small>Install the wallet, then reload this page.</small></span><ArrowUpRight size={16} /></a>}
+            {walletOptions.map((option) => <button key={option.id} className="wallet-option" disabled={connecting} onClick={() => void adapter.current?.connect(option)}><Wallet size={20} /><span>{option.name}<small>{option.rabby ? "Default wallet" : "Detected in your browser"}</small></span><ArrowRight size={16} /></button>)}
+            {!walletOptions.length && <p>No browser wallet detected. Open this site in your wallet’s browser or install Rabby.</p>}
+            {connecting && <p role="status">Approve the connection in {walletName}, or cancel below.</p>}
+            {(wallet || connecting) && <button className="secondary-button" onClick={() => { adapter.current?.disconnect(); setWalletMenu(false); }}>{connecting ? "Cancel connection" : "Disconnect wallet"}</button>}
+            <p className="wallet-readonly"><ShieldCheck size={14} />Address access only. No signatures or transactions.</p>
+        </WalletDialog>
+      )}
       {info && (
         <div className="modal-backdrop" onClick={() => setInfo(false)}>
           <section
@@ -845,8 +876,8 @@ export default function Home() {
                 stacks, holder dividends and buyback vesting remain outside coverage.
               </p>
               <p>
-                <strong>Reads only.</strong> Claim fees through the source launchpad. No wallet
-                connection, signature or transaction is requested here.
+                <strong>Reads only.</strong> Claim fees through the source launchpad. Connecting shares your account
+                address; no signature or transaction is requested here.
               </p>
             </div>
             <button className="primary-button" onClick={() => setInfo(false)}>
@@ -891,4 +922,28 @@ function Summary({
       <p>{helper}</p>
     </div>
   );
+}
+
+function WalletDialog({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const dialog = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => previous?.focus();
+  }, []);
+  return <div className="modal-backdrop" onClick={onClose}>
+    <section ref={dialog} className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-title"
+      onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
+        if (event.key === "Escape") { event.preventDefault(); onClose(); }
+        if (event.key !== "Tab") return;
+        const items = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex="0"]');
+        if (!items?.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }}>
+      <button className="icon-button modal-close" aria-label="Close wallet picker" onClick={onClose}><X size={18} /></button>
+      {children}
+    </section>
+  </div>;
 }

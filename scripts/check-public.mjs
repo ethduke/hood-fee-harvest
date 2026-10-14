@@ -44,11 +44,11 @@ export function checkBlob(path, bytes) {
   )
     violations.push("literal credential assignment");
   if (
-    /^(?:app|lib\/fees)\//.test(path) &&
+    /^(?:app|lib)\//.test(path) &&
     /console\.(?:log|warn|error|debug|info)|process\.(?:stdout|stderr)\.write/.test(source)
   )
     violations.push("application logging");
-  if (/^(?:app|lib\/fees)\//.test(path) && /localStorage|sessionStorage|indexedDB/.test(source))
+  if (/^(?:app|lib)\//.test(path) && /localStorage|sessionStorage|indexedDB/.test(source))
     violations.push("persisted wallet state");
   return violations;
 }

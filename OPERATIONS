@@ -24,5 +24,8 @@ shared Long/Longbow locked-pool manager; pons v2 fee escrow plus curve/hook disc
 pons v1 lockers. Migrated Doppler pools and separate Long hook payouts are outside
 coverage. Each source reports its exclusions and scan progress in the interface.
 
-The app only reads the chain; it never connects a signer or submits a claim.
+Wallet connection uses account access only, with Rabby preferred. No signer,
+signature, chain switch or claim transaction is requested. Scan state and wallet
+selection exist in memory only. Account changes start a fresh scan; disconnecting
+stops pending reads and clears results. Scans continue while the page stays open.
 Run git config core.hooksPath .githooks to enable local pre-commit guards.

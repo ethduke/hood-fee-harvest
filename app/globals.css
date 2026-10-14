@@ -1489,3 +1489,32 @@ td {
 .source-health strong {
   font-size: 11px;
 }
+
+/* Wallet connection and automatic scan status. */
+.wallet-control { display: flex; align-items: stretch; flex-shrink: 0; }
+.wallet-connect, .wallet-choose { display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--green); color: #384b20; font-size: 11px; font-weight: 600; padding: 11px 13px; }
+.wallet-connect { border-radius: 7px 0 0 7px; }
+.wallet-choose { border-radius: 0 7px 7px 0; border-left: 1px solid #92b746; padding: 0 9px; }
+.wallet-connect:hover, .wallet-choose:hover { background: #b7ec45; }
+.connection-status { display: flex; gap: 10px; align-items: flex-start; padding-bottom: 18px; color: #748168; }
+.connection-status > svg { flex-shrink: 0; margin-top: 2px; }
+.connection-status strong { color: #566549; font-size: 12px; font-weight: 500; line-height: 1.7; }
+.connection-status p { margin: 4px 0 0; font-size: 10px; line-height: 1.7; }
+.wallet-modal { background: #fafcf6; border: 1px solid #e7eddc; border-radius: 17px; width: 100%; max-width: 440px; max-height: 88vh; overflow: auto; padding: 30px; position: relative; box-shadow: 0 25px 100px #16240e33; }
+.wallet-modal h2 { font-size: 24px; font-weight: 500; margin: 16px 0 12px; letter-spacing: -0.7px; }
+.wallet-modal > p { color: #748168; font-size: 12px; line-height: 1.8; }
+.wallet-option { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 14px; border: 1px solid #dce6ca; background: #f4f7ed; color: #566549; border-radius: 8px; margin: 10px 0; font-size: 13px; }
+.wallet-option small { display: block; color: #748168; font-size: 10px; margin-top: 5px; }
+.wallet-option > svg:last-child { margin-left: auto; }
+.wallet-readonly { display: flex; align-items: center; gap: 7px; }
+@media (max-width: 800px) { .topbar-right { gap: 8px; } .read-only { display: none; } .breadcrumb { gap: 6px; } }
+@media (max-width: 560px) {
+  .topbar { padding: 0 16px; gap: 10px; height: auto; min-height: 64px; flex-wrap: wrap; padding-block: 12px; }
+  .breadcrumb { font-size: 9px; gap: 5px; }
+  .breadcrumb > strong { display: none; }
+  .wallet-connect { font-size: 10px; gap: 6px; padding: 10px; }
+  .wallet-choose { padding: 0 7px; }
+  .topbar-right > .icon-button { display: none; }
+  .wallet-modal { padding: 26px 22px; }
+  .connection-status strong { font-size: 11px; }
+}
