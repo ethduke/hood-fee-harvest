@@ -130,13 +130,13 @@ test("RPC logs outside an indexed wallet filter cannot become a successful empty
 test("pons batches initial custom-recipient discovery before applying the pending-record limit", async () => {
   const launched = ponsFactoryAbi.find((e)=>e.name==="TokenLaunched");
   const rpc = rpcFor((filter) => filter.address !== PONS_FACTORY.address ? []
-    : Array.from({length:256},(_,i)=>({address:filter.address,removed:false,blockHash:hash,
+    : Array.from({length:1024},(_,i)=>({address:filter.address,removed:false,blockHash:hash,
       transactionHash:hash,blockNumber:filter.toBlock,logIndex:toHex(i),
       topics:encodeEventTopics({abi:ponsFactoryAbi,eventName:"TokenLaunched",args:{token:toHex(BigInt(i+1),{size:20}),curve:other,deployer:other}}),
       data:encodeAbiParameters(launched.inputs.filter((p)=>!p.indexed),[NATIVE,1n,1n]),
     })));
   let batches=0;
-  rpc.calls=async(calls)=>{assert.ok(calls.length<=128);batches++;return calls.map(()=>({exists:true,creatorFeeRecipient:other}));};
+  rpc.calls=async(calls)=>{assert.ok(calls.length<=512);batches++;return calls.map(()=>({exists:true,creatorFeeRecipient:other}));};
   const {results}=await allPages("pons",rpc);
   assert.equal(results.length,1);
   assert.equal(batches,2);
