@@ -24,8 +24,25 @@ shared Long/Longbow locked-pool manager; pons v2 fee escrow plus curve/hook disc
 pons v1 lockers. Migrated Doppler pools and separate Long hook payouts are outside
 coverage. Each source reports its exclusions and scan progress in the interface.
 
-Wallet connection uses account access only, with Rabby preferred. No signer,
-signature, chain switch or claim transaction is requested. Scan state and wallet
-selection exist in memory only. Account changes start a fresh scan; disconnecting
-stops pending reads and clears results. Scans continue while the page stays open.
+Wallet connection uses account access only, with Rabby preferred. Scanning never
+requests a transaction. Each available fee has a separately reviewed claim action;
+wallet approval is required for every transaction, with zero native value and no
+token approval. Claims enforce Robinhood Chain, the connected fee recipient,
+pinned contract code and simulation before submission. Pool claims collect both
+currencies. Unswept estimates have no claim action.
+
+Claim preparation and confirmation endpoints only perform reads. The browser
+submits through the connected wallet. Failed send requests with an unknown outcome
+are never resent automatically. Transaction status stays in memory; check wallet
+activity before reloading if a submission's outcome is uncertain.
+
+After mining, receipt checks verify the sender, target, exact calldata, native
+value, canonical block and payout events. Refresh waits for 20 subsequent blocks,
+then reuses a signed snapshot that includes the claim for balances and history.
+A reverted or unverified payout is never recorded as a successful fee claim.
+
+Account changes invalidate unsubmitted reviews. A submitted claim is still tracked
+for its original owner; it only refreshes that owner's current view. Disconnecting
+clears scan results. No wallet address, query, review or transaction history is
+persisted by the application or written to logs.
 Run git config core.hooksPath .githooks to enable local pre-commit guards.

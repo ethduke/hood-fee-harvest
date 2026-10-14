@@ -18,6 +18,8 @@ import {
   CircleHelp,
   Radar,
 } from "lucide-react";
+import { ClaimController } from "../lib/wallet/claims.mjs";
+import { claimKey } from "../lib/fees/claim-plan.mjs";
 import { WalletAdapter } from "../lib/wallet/adapter.mjs";
 import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
 import { compactAmount, mergeRows, totals } from "../lib/fees/model.mjs";
@@ -49,6 +51,27 @@ type FeeRow = {
   block?: number;
   destination?: string;
   earmarkedRaw?: string;
+  position?: string;
+  claimHandle?: string;
+};
+type ClaimState = {
+  phase: string; error?: string; row?: FeeRow; owner?: string; hash?: string; confirmations?: number;
+  quote?: { target: string; address: string; payouts: FeeRow[]; expiresAt: number; gas: string };
+};
+const claimErrors: Record<string, string> = {
+  rejected: "Request cancelled in your wallet. No new claim was approved.",
+  nothing_to_claim: "These fees are no longer available. Refresh your balances.",
+  wrong_account: "The connected account changed. Reconnect the fee owner and try again.",
+  wrong_chain: "Choose Robinhood Chain in your wallet, then try again.",
+  contract_changed: "This contract no longer matches its reviewed code. The claim was blocked.",
+  cursor_expired: "This fee record expired. Refresh balances before claiming.",
+  quote_expired: "The claim review expired. Click Claim again to prepare fresh amounts.",
+  gas_limit: "This claim needs more gas than the supported limit. Use the launchpad to review it.",
+  read_failed: "The claim or its confirmation could not be verified. Check wallet activity before retrying.",
+  provider_unavailable: "The chain provider is unavailable. Try again shortly.",
+  rate_limited: "The provider is busy. Confirmation checks retry automatically; preparation can be retried shortly.",
+  invalid_response: "The claim response could not be verified.",
+  confirmation_pending: "Confirmation is taking longer than expected. Check again; do not submit a duplicate claim.",
 };
 type Result = {
   snapshotCursor: string;
@@ -126,6 +149,8 @@ function Amount({ row }: { row: FeeRow }) {
 }
 export default function Home() {
   const [wallet, setWallet] = useState("");
+  const [claimState, setClaimState] = useState<ClaimState>({ phase: "idle" });
+  const claims = useRef<ClaimController | null>(null);
   const [walletName, setWalletName] = useState("");
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
   const [walletMenu, setWalletMenu] = useState(false);
@@ -156,8 +181,25 @@ export default function Home() {
     setRunning(false);
   }
   useEffect(() => {
+    const claimController = new ClaimController({
+      getSession: () => adapter.current?.session,
+      notify: (state: ClaimState) => setClaimState(state),
+      refresh: (confirmation: { history: FeeRow[]; snapshotCursor: string }, address: string) => {
+        stop();
+        const seeded: Record<string, SourceState> = {};
+        for (const row of confirmation.history) {
+          const source = seeded[row.source] ?? { balances: [], history: [], pages: 0 };
+          source.history.push(row);
+          seeded[row.source] = source;
+        }
+        publish(seeded);
+        void run(address, false, Number.POSITIVE_INFINITY, confirmation.snapshotCursor);
+      },
+    });
+    claims.current = claimController;
     const connection = new WalletAdapter(window, (event: WalletEvent) => {
       if (event.type === "providers") { setWalletOptions(event.options); return; }
+      claimController.contextChanged();
       if (event.type === "connecting") {
         stop();
         publish({});
@@ -189,6 +231,8 @@ export default function Home() {
     adapter.current = connection;
     connection.start();
     return () => {
+      claimController.dispose();
+      claims.current = null;
       connection.dispose();
       adapter.current = null;
       cancelWork();
@@ -206,7 +250,7 @@ export default function Home() {
     latest.current = next;
     setStates(next);
   }
-  async function run(address: string, fresh = false, budget = Number.POSITIVE_INFINITY) {
+  async function run(address: string, fresh = false, budget = Number.POSITIVE_INFINITY, anchor?: string) {
     stop();
     const token = generation.current;
     active.current = true;
@@ -234,11 +278,8 @@ export default function Home() {
                 address,
                 source: id,
                 ...(existing?.result?.cursor ? { cursor: existing.result.cursor } : {}),
-                ...(!existing?.result?.cursor && Object.values(current).some((s) => s.result)
-                  ? {
-                      snapshotCursor: Object.values(current).find((s) => s.result)!.result!
-                        .snapshotCursor,
-                    }
+                ...(!existing?.result?.cursor && (anchor || Object.values(current).some((state) => state.result))
+                  ? { snapshotCursor: anchor || Object.values(current).find((state) => state.result)!.result!.snapshotCursor }
                   : {}),
               }),
               signal: controller.current.signal,
@@ -326,6 +367,13 @@ export default function Home() {
     setSelected(next);
     if (wallet && next.size) void run(wallet);
     else if (wallet) { stop(); setNotice("Choose at least one scan source to start checking fees."); }
+  }
+  const claimBusy = ["preparing", "review", "wallet", "submitted", "confirming", "uncertain"].includes(claimState.phase);
+  function beginClaim(row: FeeRow) {
+    if (claimBusy) return;
+    stop();
+    setNotice("Scan paused while your claim is prepared. Review the transaction in your wallet.");
+    void claims.current?.begin(row);
   }
   const included = SOURCE_INFO.filter((s) => selected.has(s.id));
   const allBalances = included.flatMap((s) => states[s.id]?.balances ?? []);
@@ -419,7 +467,7 @@ export default function Home() {
             </div>
             <span className="read-only">
               <ShieldCheck size={13} />
-              Read only
+              Confirm in wallet
             </span>
             <button aria-label="How it works" className="icon-button" onClick={() => setInfo(true)}>
               <CircleHelp size={18} />
@@ -455,7 +503,7 @@ export default function Home() {
           <section className="lookup-panel" aria-label="Scan sources">
             <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
               <ShieldCheck size={16} />
-              <div><strong>{connectionNotice}</strong><p>Address access only. No signatures or transactions. Your address stays out of URLs and browser storage.</p></div>
+              <div><strong>{connectionNotice}</strong><p>Scans are read-only. Claims require wallet confirmation. Your address stays out of URLs and browser storage.</p></div>
             </div>
             <div className="source-selector">
               <span>SCAN SOURCES</span>
@@ -465,7 +513,7 @@ export default function Home() {
                     key={source.id}
                     className={`source-chip ${selected.has(source.id) ? "selected" : ""}`}
                     aria-pressed={selected.has(source.id)}
-                    disabled={running}
+                    disabled={running || claimBusy}
                     onClick={() => toggleSource(source.id)}
                   >
                     <span className={`pad-mark ${source.id}`}>{source.mark}</span>
@@ -558,13 +606,13 @@ export default function Home() {
                       className="icon-button"
                       title="Refresh all selected sources"
                       aria-label="Refresh all selected sources"
-                      disabled={!included.length}
+                      disabled={!included.length || claimBusy}
                       onClick={() => void run(wallet, true)}
                     >
                       <RefreshCw size={16} />
                     </button>
                     {!complete && included.length > 0 && (
-                      <button className="secondary-button" onClick={continueScan}>
+                      <button className="secondary-button" disabled={claimBusy} onClick={continueScan}>
                         Continue scan
                         <ArrowRight size={14} />
                       </button>
@@ -572,6 +620,25 @@ export default function Home() {
                   </>
                 )}
               </div>
+            </section>
+          )}
+          {claimState.phase !== "idle" && (claimState.owner === wallet || claimBusy) && (
+            <section className="claim-status" role="status" aria-live="polite" aria-atomic="true">
+              <strong>{claimBusy && claimState.owner && claimState.owner !== wallet
+                ? "A claim for the previous account is still being tracked."
+                : claimState.phase === "preparing" ? "Checking your claim…"
+                : claimState.phase === "review" ? "Your claim is ready to review."
+                : claimState.phase === "wallet" ? `Confirm the transaction in ${walletName || "your wallet"}.`
+                : claimState.phase === "submitted" ? "Claim submitted. Waiting for it to be mined."
+                : claimState.phase === "confirming" ? `Claim mined. Confirming onchain · ${claimState.confirmations ?? 0}/20 blocks.`
+                : claimState.phase === "confirmed" ? running ? "Claim confirmed. Refreshing your balances and payout history." : complete ? "Claim confirmed. Balances and payout history refreshed." : "Claim confirmed. Your payout is recorded; check the scan status for remaining reads."
+                : claimState.phase === "reverted" ? "The claim reverted. No fee payout was made; network gas may have been spent."
+                : claimState.phase === "no_payout" ? "Transaction confirmed; a fee payout could not be verified. Refreshing your results."
+                : claimState.phase === "uncertain" ? "The wallet may have submitted this claim. Check wallet activity before trying again."
+                : "Claim needs attention."}</strong>
+              {claimState.error && claimState.phase !== "uncertain" && <p>{claimErrors[claimState.error] ?? "The claim could not be verified. Check your wallet before retrying."}</p>}
+              {claimState.hash && <a href={explorer("tx", claimState.hash)} target="_blank" rel="noreferrer">View transaction <ArrowUpRight size={13} /></a>}
+              {claimState.error === "confirmation_pending" && <button className="secondary-button" onClick={() => void claims.current?.watch()}>Check confirmation</button>}
             </section>
           )}
           <section className="results-panel">
@@ -632,6 +699,7 @@ export default function Home() {
                       <th>{activeTab === "history" ? "PAID OUT" : "AMOUNT"}</th>
                       <th>{activeTab === "history" ? "CONFIRMED AT" : "STATUS"}</th>
                       <th>{activeTab === "history" ? "TRANSACTION" : "POSITION"}</th>
+                      {activeTab !== "history" && <th>CLAIM</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -709,6 +777,16 @@ export default function Home() {
                             <span className="table-muted">Shared escrow</span>
                           )}
                         </td>
+                        {activeTab !== "history" && <td>
+                          {row.kind === "available" && BigInt(row.raw) > 0n ? (
+                            <button className="claim-button" disabled={claimBusy || !row.claimHandle}
+                              title={!row.claimHandle ? "Refresh this fee before claiming" : "Review and claim with your connected wallet"}
+                              onClick={() => beginClaim(row)}>
+                              {claimBusy && claimState.row && claimKey(claimState.row) === claimKey(row) ? "In progress…" : "Claim"}
+                              <ArrowUpRight size={13} />
+                            </button>
+                          ) : <span className="table-muted">{row.kind !== "available" ? "Not yet claimable" : "—"}</span>}
+                        </td>}
                       </tr>
                     ))}
                   </tbody>
@@ -728,14 +806,14 @@ export default function Home() {
                     : running
                       ? "Looking for your fees…"
                       : complete && !historyIncomplete
-                        ? "No matching payouts or balances found"
+                        ? activeTab === "history" ? "No payout history found" : "No unclaimed fees found"
                         : "Nothing found in the pages scanned yet"}
                 </h2>
                 <p>
                   {!wallet
                     ? "Connect Rabby in the top-right corner. We’ll scan the selected sources\nand show available fees and onchain payout history as results arrive."
                     : complete && !historyIncomplete
-                      ? "No matching results in the covered contracts. Check coverage for excluded routes."
+                      ? activeTab === "history" ? "No matching payouts in the covered contracts. Check coverage for excluded routes." : "No positive balances found in the covered contracts. Confirmed claims appear in Payout history."
                       : "Keep scanning to discover older positions. Unread pages and failed reads remain unknown."}
                 </p>
                 {!wallet && (
@@ -749,7 +827,7 @@ export default function Home() {
             <div className="results-footer">
               <span>
                 <ShieldCheck size={13} />
-                Verified contract events. Exact asset amounts. No signatures.
+                Verified contract events. Exact asset amounts. Wallet-approved claims.
               </span>
               <span>
                 {wallet
@@ -808,6 +886,18 @@ export default function Home() {
           </footer>
         </main>
       </div>
+      {claimState.phase === "review" && claimState.quote && (
+        <WalletDialog titleId="claim-title" closeLabel="Cancel claim review" onClose={() => claims.current?.cancel()}>
+          <span className="eyebrow">REVIEW YOUR CLAIM</span>
+          <h2 id="claim-title">Claim your fees.</h2>
+          <p>{claimState.quote.payouts.length > 1 ? "This transaction collects both assets for this position." : "This transaction claims fees to your connected account."}</p>
+          <div className="claim-payouts">{claimState.quote.payouts.filter((row) => BigInt(row.raw) > 0n).map((row) => <div key={row.currency}><Amount row={row} /><small>{short(row.currency)}</small></div>)}</div>
+          <p>Recipient: <span className="mono">{short(claimState.quote.address)}</span><br />Network: Robinhood Chain</p>
+          <a className="text-button" href={explorer("address", claimState.quote.target)} target="_blank" rel="noreferrer">View claim contract <ArrowUpRight size={13} /></a>
+          <p>The claim was simulated. Amounts can change before mining. You pay network gas in ETH; your wallet shows the final gas fee. No token approval is requested.</p>
+          <button className="primary-button" onClick={() => void claims.current?.send()}>Confirm in {walletName || "wallet"}<ArrowUpRight size={15} /></button>
+        </WalletDialog>
+      )}
       {walletMenu && (
         <WalletDialog onClose={() => { if (connecting) adapter.current?.disconnect(); setWalletMenu(false); }}>
 
@@ -819,7 +909,7 @@ export default function Home() {
             {!walletOptions.length && <p>No browser wallet detected. Open this site in your wallet’s browser or install Rabby.</p>}
             {connecting && <p role="status">Approve the connection in {walletName}, or cancel below.</p>}
             {(wallet || connecting) && <button className="secondary-button" onClick={() => { adapter.current?.disconnect(); setWalletMenu(false); }}>{connecting ? "Cancel connection" : "Disconnect wallet"}</button>}
-            <p className="wallet-readonly"><ShieldCheck size={14} />Address access only. No signatures or transactions.</p>
+            <p className="wallet-readonly"><ShieldCheck size={14} />Connection shares your address. Each claim requires wallet confirmation.</p>
         </WalletDialog>
       )}
       {info && (
@@ -876,8 +966,7 @@ export default function Home() {
                 stacks, holder dividends and buyback vesting remain outside coverage.
               </p>
               <p>
-                <strong>Reads only.</strong> Claim fees through the source launchpad. Connecting shares your account
-                address; no signature or transaction is requested here.
+                <strong>You approve every claim.</strong> Scanning only reads the chain. Claiming sends one transaction after you review it and approve it in your wallet. Pool claims collect both assets together. Unswept estimates cannot be claimed here.
               </p>
             </div>
             <button className="primary-button" onClick={() => setInfo(false)}>
@@ -913,7 +1002,7 @@ function Summary({
         {!wallet ? (
           <span className="muted-number">—</span>
         ) : !values.length ? (
-          <span className="muted-number">Nothing found yet</span>
+          <span className="muted-number">None found</span>
         ) : (
           values.slice(0, 2).map((row) => <span key={row.currency}>{exact(row)}</span>)
         )}
@@ -924,7 +1013,7 @@ function Summary({
   );
 }
 
-function WalletDialog({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function WalletDialog({ children, onClose, titleId = "wallet-title", closeLabel = "Close wallet picker" }: { children: React.ReactNode; onClose: () => void; titleId?: string; closeLabel?: string }) {
   const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -932,7 +1021,7 @@ function WalletDialog({ children, onClose }: { children: React.ReactNode; onClos
     return () => previous?.focus();
   }, []);
   return <div className="modal-backdrop" onClick={onClose}>
-    <section ref={dialog} className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-title"
+    <section ref={dialog} className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}
       onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
         if (event.key === "Escape") { event.preventDefault(); onClose(); }
         if (event.key !== "Tab") return;
@@ -942,7 +1031,7 @@ function WalletDialog({ children, onClose }: { children: React.ReactNode; onClos
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       }}>
-      <button className="icon-button modal-close" aria-label="Close wallet picker" onClick={onClose}><X size={18} /></button>
+      <button className="icon-button modal-close" aria-label={closeLabel} onClick={onClose}><X size={18} /></button>
       {children}
     </section>
   </div>;

@@ -1518,3 +1518,14 @@ td {
   .wallet-modal { padding: 26px 22px; }
   .connection-status strong { font-size: 11px; }
 }
+
+.claim-button { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border-radius: 6px; background: var(--green); color: #384b20; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.claim-button:hover { background: #b7ec45; }
+.claim-status { padding: 16px 18px; border: 1px solid #dfe8d0; border-radius: 8px; background: #f7faef; margin-bottom: 20px; color: #566549; }
+.claim-status strong { font-size: 12px; font-weight: 500; line-height: 1.8; }
+.claim-status p { font-size: 11px; color: #748168; line-height: 1.7; margin: 7px 0; }
+.claim-status a { display: flex; gap: 5px; align-items: center; width: fit-content; font-size: 11px; margin-top: 8px; color: #728456; }
+.claim-status .secondary-button { margin-top: 10px; }
+.claim-payouts { display: flex; flex-direction: column; gap: 12px; margin: 18px 0; padding: 16px; background: #f0f5e6; border-radius: 8px; }
+.claim-payouts > div { display: flex; justify-content: space-between; gap: 12px; }
+.claim-payouts small, .mono { font-family: var(--mono); font-size: 10px; color: #748168; }
