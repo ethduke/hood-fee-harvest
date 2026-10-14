@@ -3,7 +3,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Hood Fee Harvest — Find your launchpad fees",
   description:
-    "Look up unclaimed creator fees and onchain payout history on Robinhood Chain. No wallet connection required.",
+    "Connect your wallet to discover unclaimed launchpad fees, review claims and track verified payouts on Robinhood Chain.",
   icons: { icon: "/favicon.svg" },
   robots: { index: true, follow: true },
 };

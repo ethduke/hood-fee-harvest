@@ -6,16 +6,13 @@ import {
   ArrowRight,
   Search,
   Wallet,
-  Layers3,
   History,
   Check,
   ShieldCheck,
   ChevronDown,
   Pause,
   X,
-  Code2,
   RefreshCw,
-  CircleHelp,
   Radar,
 } from "lucide-react";
 import { ClaimController } from "../lib/wallet/claims.mjs";
@@ -406,54 +403,15 @@ export default function Home() {
   ).filter((r) => filter === "all" || r.source === filter);
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <Link href="/" className="brand">
-          <Brand />
-          <span>
-            hood<span className="brand-sub">fee harvest</span>
-          </span>
-        </Link>
-        <span className="sidebar-label">WORKSPACE</span>
-        <button
-          className="nav-item active"
-          onClick={() => {
-            setInfo(false);
-            connectRef.current?.focus();
-          }}
-        >
-          <Layers3 size={18} />
-          Fee dashboard
-          <span className="nav-dot" />
-        </button>
-        <button className="nav-item" onClick={() => setInfo(true)}>
-          <ShieldCheck size={18} />
-          Coverage & sources
-        </button>
-        <div className="sidebar-tip">
-          <Radar size={23} />
-          <strong>Your fees. In plain sight.</strong>
-          <p>One address. Reviewed contracts. A clear record of what’s owed and what’s paid.</p>
-        </div>
-        <div className="sidebar-bottom">
-          <div className="network-status">
-            <ChainGlyph />
-            <span>
-              Robinhood Chain<small>Mainnet · 4663</small>
-            </span>
-            <span className="green-dot" />
-          </div>
-          <a href="https://github.com/ethduke/hood-fee-harvest" target="_blank" rel="noreferrer">
-            <Code2 size={15} />
-            View source
-            <ArrowUpRight size={14} />
-          </a>
-        </div>
-      </aside>
       <div className="main-shell">
         <header className="topbar">
-          <span className="breadcrumb">
-            Workspace <span>/</span> <strong>Fee dashboard</strong>
-          </span>
+          <Link href="/" className="brand" aria-label="Hood Fee Harvest home">
+            <Brand /><span>hood<span className="brand-sub">FEE HARVEST</span></span>
+          </Link>
+          <nav className="top-nav" aria-label="Main navigation">
+            <a href="#harvest" className="nav-link active">Dashboard</a>
+            <button className="nav-link" onClick={() => setInfo(true)}>Coverage <ArrowUpRight size={13} /></button>
+          </nav>
           <div className="topbar-right">
             <div className="wallet-control">
               <button ref={connectRef} className="wallet-connect" disabled={connecting}
@@ -465,45 +423,35 @@ export default function Home() {
                 <ChevronDown size={14} />
               </button>
             </div>
-            <span className="read-only">
-              <ShieldCheck size={13} />
-              Confirm in wallet
-            </span>
-            <button aria-label="How it works" className="icon-button" onClick={() => setInfo(true)}>
-              <CircleHelp size={18} />
-            </button>
           </div>
         </header>
         <main>
-          <div className="page-heading">
-            <div>
-              <span className="eyebrow">
-                <span className="green-dot" />
-                ROBINHOOD CHAIN FEE EXPLORER
-              </span>
-              <h1>
-                Fees you earned.
-                <br />
-                <span>Still yours.</span>
-              </h1>
-              <p>
-                Find unclaimed launchpad fees and follow every verified payout.
-                <br className="desktop-break" /> Connect your wallet. Your fee scan starts automatically.
-              </p>
+          <section className="page-heading" aria-labelledby="hero-title">
+            <div className="hero-copy">
+              <span className="eyebrow"><span className="green-dot" /> MADE FOR ROBINHOOD CHAIN</span>
+              <h1 id="hero-title">Leave no<br /><span>fees</span> behind<span className="hero-period">.</span></h1>
+              <p>Your launchpad fees, finally in one place.<br />Find what’s unclaimed. Keep track of what’s paid.</p>
+              <div className="hero-steps"><span><b>01</b> Connect</span><ArrowRight size={15} /><span><b>02</b> Discover</span><ArrowRight size={15} /><span><b>03</b> Harvest</span></div>
             </div>
-            <div className="hero-emblem" aria-hidden="true">
-              <span className="orbit orbit-one" />
-              <span className="orbit orbit-two" />
-              <Brand />
-              <span className="orbit-node node-one" />
-              <span className="orbit-node node-two" />
-              <span className="emblem-caption">ONCHAIN. ACCOUNTED FOR.</span>
+            <div className="harvest-art" aria-hidden="true">
+              <div className="art-heading"><span>THE HARVEST ROUTE</span><ArrowUpRight size={20} /></div>
+              <div className="art-route">
+                <div className="art-sources"><span>o1</span><span>long</span><span>pons</span></div>
+                <svg className="route-lines" viewBox="0 0 300 160" fill="none"><path d="M0 26H60Q100 26 110 56L120 80H260M0 80H260M0 134H60Q100 134 110 104L120 80" stroke="currentColor" strokeWidth="1.5" /><path d="m245 65 15 15-15 15" stroke="currentColor" strokeWidth="1.5" /><circle cx="120" cy="80" r="5" fill="currentColor" /></svg>
+                <span className="art-wallet"><Wallet size={32} strokeWidth={1.4} /></span>
+              </div>
+              <div className="art-caption"><strong>Different launchpads.<br /><em>One clear view.</em></strong><span>READ<br />REVIEW<br />CLAIM</span></div>
+              <div className="art-footer"><span className="green-dot" /> REVIEWED CONTRACTS <span>4663 ↗</span></div>
             </div>
-          </div>
+          </section>
+          <div className="section-heading" id="harvest"><span className="eyebrow">01 / YOUR HARVEST</span><span className="network-tag"><ChainGlyph /> Robinhood Chain <span>Mainnet</span></span></div>
+          <div className="dashboard-grid">
           <section className="lookup-panel" aria-label="Scan sources">
+            <div className="panel-heading"><span>YOUR SCAN</span><Radar size={18} /></div>
+
             <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
               <ShieldCheck size={16} />
-              <div><strong>{connectionNotice}</strong><p>Scans are read-only. Claims require wallet confirmation. Your address stays out of URLs and browser storage.</p></div>
+              <div><strong>{connectionNotice}</strong><p>Connect once. We’ll check your selected sources in the background.</p></div>
             </div>
             <div className="source-selector">
               <span>SCAN SOURCES</span>
@@ -523,7 +471,7 @@ export default function Home() {
                 ))}
               </div>
               <button className="text-button coverage-link" onClick={() => setInfo(true)}>
-                View coverage
+                What’s covered
                 <ArrowUpRight size={13} />
               </button>
             </div>
@@ -543,7 +491,7 @@ export default function Home() {
               icon={<Wallet size={17} />}
             />
             <Summary
-              label="ALREADY PAID"
+              label="CLAIMED TO DATE"
               values={paid}
               wallet={wallet}
               helper={
@@ -577,6 +525,7 @@ export default function Home() {
               </div>
             </div>
           </section>
+          </div>
           {wallet && (
             <section className="scan-strip" aria-live="polite">
               <div>
@@ -641,7 +590,8 @@ export default function Home() {
               {claimState.error === "confirmation_pending" && <button className="secondary-button" onClick={() => void claims.current?.watch()}>Check confirmation</button>}
             </section>
           )}
-          <section className="results-panel">
+          <div className="section-heading results-title"><div><span className="eyebrow">02 / THE DETAILS</span><h2>Every fee. Accounted for.</h2></div><button className="text-button" onClick={() => setInfo(true)}>How it works <ArrowUpRight size={15} /></button></div>
+          <section className="results-panel" aria-label="Fee balances and payout history">
             <div className="results-header">
               <div className="tabs" role="tablist" aria-label="Fee results">
                 <button
@@ -794,7 +744,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="empty-state">
-                <div className="empty-icon">
+                <div className="empty-icon" aria-hidden="true">
                   {activeTab === "history" ? <History size={27} /> : <Wallet size={27} />}
                   <span>
                     <Search size={12} />
@@ -802,7 +752,7 @@ export default function Home() {
                 </div>
                 <h2>
                   {!wallet
-                    ? "Your next harvest starts here"
+                    ? "Your fees are out there."
                     : running
                       ? "Looking for your fees…"
                       : complete && !historyIncomplete
@@ -811,14 +761,14 @@ export default function Home() {
                 </h2>
                 <p>
                   {!wallet
-                    ? "Connect Rabby in the top-right corner. We’ll scan the selected sources\nand show available fees and onchain payout history as results arrive."
+                    ? "Connect your wallet to discover unclaimed fees\nand see your verified payout history."
                     : complete && !historyIncomplete
                       ? activeTab === "history" ? "No matching payouts in the covered contracts. Check coverage for excluded routes." : "No positive balances found in the covered contracts. Confirmed claims appear in Payout history."
                       : "Keep scanning to discover older positions. Unread pages and failed reads remain unknown."}
                 </p>
                 {!wallet && (
-                  <button className="text-button" onClick={connectDefault} disabled={connecting}>
-                    Connect wallet
+                  <button className="primary-button" onClick={connectDefault} disabled={connecting}>
+                    Connect Rabby
                     <ArrowUpRight size={13} />
                   </button>
                 )}
@@ -827,7 +777,7 @@ export default function Home() {
             <div className="results-footer">
               <span>
                 <ShieldCheck size={13} />
-                Verified contract events. Exact asset amounts. Wallet-approved claims.
+                Read-only scans · Wallet-approved claims
               </span>
               <span>
                 {wallet
@@ -878,11 +828,9 @@ export default function Home() {
             );
           })}
           <footer className="page-footer">
-            <span>Built for the fees you might have forgotten.</span>
-            <span>
-              Independent tool · Robinhood Chain
-              <small>No Robinhood or launchpad affiliation.</small>
-            </span>
+            <div><span className="footer-brand">hood ↗</span><span>Find it. Claim it. Carry on.</span></div>
+            <div><a href="https://github.com/ethduke/hood-fee-harvest" target="_blank" rel="noreferrer">View source <ArrowUpRight size={14} /></a><button className="text-button" onClick={() => setInfo(true)}>Coverage & privacy <ArrowUpRight size={14} /></button></div>
+            <small>Independent tool. No Robinhood or launchpad affiliation.</small>
           </footer>
         </main>
       </div>
@@ -913,21 +861,7 @@ export default function Home() {
         </WalletDialog>
       )}
       {info && (
-        <div className="modal-backdrop" onClick={() => setInfo(false)}>
-          <section
-            className="coverage-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="coverage-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="icon-button modal-close"
-              aria-label="Close coverage details"
-              onClick={() => setInfo(false)}
-            >
-              <X size={18} />
-            </button>
+        <WalletDialog titleId="coverage-title" closeLabel="Close coverage details" className="coverage-modal" onClose={() => setInfo(false)}>
             <span className="eyebrow">KNOW WHAT’S COVERED</span>
             <h2 id="coverage-title">A clear view of your fees.</h2>
             <p>
@@ -973,8 +907,7 @@ export default function Home() {
               Back to dashboard
               <ArrowRight size={15} />
             </button>
-          </section>
-        </div>
+        </WalletDialog>
       )}
     </div>
   );
@@ -1013,7 +946,7 @@ function Summary({
   );
 }
 
-function WalletDialog({ children, onClose, titleId = "wallet-title", closeLabel = "Close wallet picker" }: { children: React.ReactNode; onClose: () => void; titleId?: string; closeLabel?: string }) {
+function WalletDialog({ children, onClose, titleId = "wallet-title", closeLabel = "Close wallet picker", className = "wallet-modal" }: { children: React.ReactNode; onClose: () => void; titleId?: string; closeLabel?: string; className?: string }) {
   const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -1021,7 +954,7 @@ function WalletDialog({ children, onClose, titleId = "wallet-title", closeLabel 
     return () => previous?.focus();
   }, []);
   return <div className="modal-backdrop" onClick={onClose}>
-    <section ref={dialog} className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}
+    <section ref={dialog} className={className} role="dialog" aria-modal="true" aria-labelledby={titleId}
       onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
         if (event.key === "Escape") { event.preventDefault(); onClose(); }
         if (event.key !== "Tab") return;
