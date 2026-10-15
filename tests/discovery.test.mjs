@@ -4,7 +4,7 @@ import { encodeAbiParameters, encodeEventTopics, toHex } from "viem";
 import { scan } from "../lib/fees/engine.mjs";
 import { seal } from "../lib/fees/cursor.mjs";
 import { O1, LONG, PONS_V1, PONS_FACTORY } from "../lib/fees/catalog.mjs";
-import { o1Legacy, longAbi, ponsFactoryAbi } from "../lib/fees/abi.mjs";
+import { o1Legacy, longAbi, ponsFactoryAbi, ponsV1Abi } from "../lib/fees/abi.mjs";
 import { Rpc } from "../lib/fees/rpc.mjs";
 import { NATIVE, ReadError } from "../lib/fees/model.mjs";
 
@@ -29,10 +29,10 @@ function rpcFor(logs) {
     },
   };
 }
-async function allPages(source, rpc, cursor) {
+async function allPages(source, rpc, cursor, scope) {
   const history = [], results = [];
   for (let page = 0; page < 100; page++) {
-    const result = await scan({address:wallet, source, ...(cursor ? {cursor} : {})}, {secret, createRpc:()=>rpc});
+    const result = await scan({address:wallet, source, scope, ...(cursor ? {cursor} : {})}, {secret, createRpc:()=>rpc});
     results.push(result); history.push(...result.history);
     if (!result.cursor) return {results, history};
     cursor = result.cursor;
@@ -63,6 +63,45 @@ test("O1 sparse full history completes in seven queries, one per escrow", async 
   }
   assert.equal(results.at(-1).coverage.complete, true);
   assert.equal(results.at(-1).coverage.blocksChecked, results.at(-1).coverage.blocksTotal);
+});
+test("available-fee scans return direct balances before any event query for all three sources", async () => {
+  for (const source of ["o1", "long", "pons"]) {
+    const rpc = rpcFor(() => assert.fail("initial balance page queried logs"));
+    const result = await scan({address:wallet, source, scope:"balances"}, {secret, createRpc:()=>rpc});
+    assert.equal(result.history.length, 0);
+    assert.ok(result.cursor);
+    if (source !== "long") assert.ok(result.balances.length > 0);
+  }
+});
+test("available discovery excludes payout streams and still finds non-native owed fees", async () => {
+  for (const source of ["o1", "long", "pons"]) {
+    const rpc = rpcFor((filter) => {
+      const selectors = Array.isArray(filter.topics[0]) ? filter.topics[0] : [filter.topics[0]];
+      const payouts = [o1Legacy, longAbi, ponsV1Abi].flatMap((abi) => abi.filter((e) => e.type === "event" && /Claimed|Release/.test(e.name)).map((e) => encodeEventTopics({abi:[e], eventName:e.name})[0]));
+      assert.ok(selectors.every((selector) => !payouts.includes(selector)));
+      if (filter.address !== O1[0].address) return [];
+      return [{...claimLog(filter,88000000), topics:encodeEventTopics({abi:o1Legacy,eventName:"Credited",args:{recipient:wallet,currency:other}})}];
+    });
+    const {results, history} = await allPages(source,rpc,undefined,"balances");
+    assert.equal(history.length,0);
+    assert.equal(results.at(-1).coverage.complete,true);
+    if (source === "o1") assert.ok(results.flatMap((r)=>r.balances).some((r)=>r.currency===other));
+    if (source === "long") assert.equal(rpc.queries.length,1);
+  }
+});
+test("payout history loads claim events without balance reads or claim simulations", async () => {
+  const rpc = rpcFor((filter) => filter.address===O1[0].address ? [claimLog(filter,88000000)] : []);
+  rpc.call=async()=>assert.fail("history scan read a current balance");
+  const {results,history}=await allPages("o1",rpc,undefined,"history");
+  assert.equal(history.length,1);
+  assert.ok(results.every((r)=>r.balances.length===0));
+  assert.equal(results.at(-1).coverage.complete,true);
+});
+test("scan cursors cannot be reused across balance and history scopes", async () => {
+  const rpc=rpcFor(()=>[]);
+  const first=await scan({address:wallet,source:"o1",scope:"balances"},{secret,createRpc:()=>rpc});
+  await assert.rejects(scan({address:wallet,source:"o1",scope:"history",cursor:first.cursor},{secret,createRpc:()=>rpc}),e=>e.code==="cursor_expired");
+  await assert.rejects(scan({address:wallet,source:"o1",scope:"unknown"},{secret,createRpc:()=>rpc}),e=>e.code==="invalid_request");
 });
 test("provider range limits bisect in place and cover every block exactly once", async () => {
   const covered = [];

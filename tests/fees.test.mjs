@@ -420,11 +420,16 @@ test("pons v1 respects redirects before the claim within the same block", async 
   const next = await finishPons(true);
   assert.equal(next.history.length, 0);
 });
-async function finishPons(redirect) {
+test("history-only pons reads preserve historical recipient attribution without balance simulations", async () => {
+  const next = await finishPons(false, "history");
+  assert.deepEqual(next.history.map((r) => r.raw), ["12", "13"]);
+  assert.equal(next.balances.length, 0);
+});
+async function finishPons(redirect, scope) {
   let cursor, result;
   const history = [];
   for (let page = 0; page < 10; page++) {
-    result = await scan({ address: wallet, source: "pons", ...(cursor ? {cursor} : {}) },
+    result = await scan({ address: wallet, source: "pons", scope, ...(cursor ? {cursor} : {}) },
       { secret, createRpc: () => ponsRpc(redirect) });
     history.push(...result.history);
     if (!result.cursor) break;

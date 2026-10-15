@@ -24,6 +24,7 @@ import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
 import { compactAmount, mergeRows, totals } from "../lib/fees/model.mjs";
 const SCAN_PASS_REQUESTS = 6;
 const SCAN_PASS_DURATION = 20_000;
+type ScanScope = "balances" | "history";
 type WalletOption = { id: string; name: string; rabby: boolean; provider: { request: (input: { method: string }) => Promise<unknown> } };
 type WalletEvent =
   | { type: "providers"; options: WalletOption[] }
@@ -147,9 +148,12 @@ export default function Home() {
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
   const [walletMenu, setWalletMenu] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [connectionNotice, setConnectionNotice] = useState("Connect your wallet for a short fee scan. Continue only when you choose.");
+  const [connectionNotice, setConnectionNotice] = useState("Connect your wallet to check available fees. Payout history loads only when opened.");
   const [selected, setSelected] = useState(new Set(SOURCE_INFO.map((s) => s.id))),
     [states, setStates] = useState<Record<string, SourceState>>({});
+  const [historyStates, setHistoryStates] = useState<Record<string, SourceState>>({});
+  const historyLatest = useRef<Record<string, SourceState>>({});
+  const historyStarted = useRef(false);
   const [activeTab, setActiveTab] = useState("unclaimed"),
     [running, setRunning] = useState(false),
     [info, setInfo] = useState(false),
@@ -179,12 +183,16 @@ export default function Home() {
       refresh: (confirmation: { history: FeeRow[]; snapshotCursor: string }, address: string) => {
         stop();
         const seeded: Record<string, SourceState> = {};
+        for (const [id, state] of Object.entries(historyLatest.current))
+          seeded[id] = { balances: [], history: state.history, pages: 0 };
         for (const row of confirmation.history) {
           const source = seeded[row.source] ?? { balances: [], history: [], pages: 0 };
-          source.history.push(row);
+          source.history = mergeRows([...source.history, row]) as FeeRow[];
           seeded[row.source] = source;
         }
-        publish(seeded);
+        publish(seeded, "history");
+        setActiveTab("unclaimed");
+        publish({});
         void run(address, false, confirmation.snapshotCursor);
       },
     });
@@ -192,12 +200,15 @@ export default function Home() {
     const connection = new WalletAdapter(window, (event: WalletEvent) => {
       if (event.type === "providers") { setWalletOptions(event.options); return; }
       claimController.contextChanged();
+      publish({}, "history");
+      historyStarted.current = false;
+      setActiveTab("unclaimed");
       if (event.type === "connecting") {
         stop();
         publish({});
         setWallet("");
         setConnecting(true);
-        setConnectionNotice("Approve the connection in your wallet. A short fee scan will start automatically.");
+        setConnectionNotice("Approve the connection in your wallet. Available fees are checked first; payout history loads when opened.");
       } else if (event.type === "connected") {
         stop();
         publish({});
@@ -205,7 +216,7 @@ export default function Home() {
         setConnecting(false);
         setWalletMenu(false);
         setFilter("all");
-        setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Each scan checks a short batch, then pauses for you to continue.`);
+        setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Checking available fees first. Open Payout history to load past claims.`);
         if (selectedRef.current.size) void run(event.address, true);
         else setNotice("Choose at least one scan source to start checking fees.");
       } else {
@@ -235,18 +246,24 @@ export default function Home() {
     if (preferred) void adapter.current?.connect(preferred);
     else setWalletMenu(true);
   }
-  function publish(next: Record<string, SourceState>) {
-    latest.current = next;
-    setStates(next);
+  function publish(next: Record<string, SourceState>, scope: ScanScope = "balances") {
+    if (scope === "history") {
+      historyLatest.current = next;
+      setHistoryStates(next);
+    } else {
+      latest.current = next;
+      setStates(next);
+    }
   }
-  async function run(address: string, fresh = false, anchor?: string) {
+  async function run(address: string, fresh = false, anchor?: string, scope: ScanScope = "balances") {
     stop();
+    if (scope === "history") historyStarted.current = true;
     const token = generation.current;
     active.current = true;
     setRunning(true);
     setNotice("");
-    let current: Record<string, SourceState> = fresh ? {} : { ...latest.current };
-    if (fresh) publish(current);
+    let current: Record<string, SourceState> = fresh ? {} : { ...(scope === "history" ? historyLatest.current : latest.current) };
+    if (fresh) publish(current, scope);
     const ids = SOURCE_INFO.filter((s) => selectedRef.current.has(s.id)).map((s) => s.id);
     let requests = 0;
     let timedOut = false;
@@ -268,7 +285,7 @@ export default function Home() {
           didWork = true;
           requests++;
           const coverage = existing?.result?.coverage;
-          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}. This pass stops after ${SCAN_PASS_REQUESTS} pages or ${SCAN_PASS_DURATION / 1000} seconds.${coverage?.pending ? ` ${coverage.pending} candidate records awaiting verification.` : ""}`);
+          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}: ${scope === "history" ? "payout history" : "available fees"}. This pass stops after ${SCAN_PASS_REQUESTS} pages or ${SCAN_PASS_DURATION / 1000} seconds.${coverage?.pending ? ` ${coverage.pending} candidate records awaiting verification.` : ""}`);
           controller.current = new AbortController();
           try {
             const response = await fetch("/api/scan", {
@@ -277,6 +294,7 @@ export default function Home() {
               body: JSON.stringify({
                 address,
                 source: id,
+                scope,
                 ...(existing?.result?.cursor ? { cursor: existing.result.cursor } : {}),
                 ...(!existing?.result?.cursor && (anchor || Object.values(current).some((state) => state.result))
                   ? { snapshotCursor: anchor || Object.values(current).find((state) => state.result)!.result!.snapshotCursor }
@@ -298,7 +316,7 @@ export default function Home() {
                   error: errors[data.error] ?? errors.provider_unavailable,
                 },
               };
-              publish(current);
+              publish(current, scope);
               continue;
             }
             const result = data as Result;
@@ -314,7 +332,7 @@ export default function Home() {
                 pages: (existing?.pages ?? 0) + 1,
               },
             };
-            publish(current);
+            publish(current, scope);
           } catch {
             if (token !== generation.current || !active.current || timedOut) break;
             current = {
@@ -327,7 +345,7 @@ export default function Home() {
                 error: errors.provider_unavailable,
               },
             };
-            publish(current);
+            publish(current, scope);
           }
         }
         if (!didWork) break;
@@ -340,8 +358,8 @@ export default function Home() {
         setNotice(failed
           ? "Some sources could not be read. Verified results are kept; unread fees remain unknown. Continue to retry."
           : finished
-            ? "Scan complete for the selected contracts. Your available fees and claimed history are ready."
-            : "This scan pass is finished. Your results are kept. Choose Continue scan to search more history and positions.");
+            ? scope === "history" ? "Payout history loaded for the selected contracts." : "Available-fee checks complete for the selected contracts. Open Payout history to load past claims."
+            : `This scan pass is finished. Your results are kept. Choose Continue scan to check more ${scope === "history" ? "payout history" : "fee positions"}.`);
       }
     } finally {
       clearTimeout(timeout);
@@ -352,11 +370,20 @@ export default function Home() {
     }
   }
   function continueScan() {
+    const scope = activeTab === "history" ? "history" : "balances";
     const cleaned = Object.fromEntries(
-      Object.entries(latest.current).map(([id, state]) => [id, { ...state, error: undefined }]),
+      Object.entries(scope === "history" ? historyLatest.current : latest.current).map(([id, state]) => [id, { ...state, error: undefined }]),
     );
-    publish(cleaned);
-    void run(wallet, false);
+    publish(cleaned, scope);
+    void run(wallet, false, undefined, scope);
+  }
+  function changeTab(tab: string) {
+    if (tab === activeTab) return;
+    stop();
+    setActiveTab(tab);
+    setNotice("");
+    if (tab === "history" && wallet && !claimBusy && !historyStarted.current && selectedRef.current.size)
+      void run(wallet, false, undefined, "history");
   }
   function toggleSource(id: string) {
     if (running) return;
@@ -376,23 +403,25 @@ export default function Home() {
     void claims.current?.begin(row);
   }
   const included = SOURCE_INFO.filter((s) => selected.has(s.id));
-  const hasSourceErrors = included.some((source) => states[source.id]?.error);
+  const scanStates = activeTab === "history" ? historyStates : states;
+  const hasSourceErrors = included.some((source) => scanStates[source.id]?.error);
   const allBalances = included.flatMap((s) => states[s.id]?.balances ?? []);
   const available = allBalances.filter((r) => r.kind === "available" && BigInt(r.raw) > 0n);
   const pending = allBalances.filter((r) => r.kind !== "available" && BigInt(r.raw) > 0n);
   const claimed = included
-    .flatMap((s) => states[s.id]?.history ?? [])
+    .flatMap((s) => historyStates[s.id]?.history ?? [])
     .sort((a, b) => (b.block ?? 0) - (a.block ?? 0));
   const complete =
     wallet && included.length > 0 &&
-    included.every((s) => states[s.id]?.result?.coverage.complete && !states[s.id]?.error);
+    included.every((s) => scanStates[s.id]?.result?.coverage.complete && !scanStates[s.id]?.error);
+  const historyComplete = included.length > 0 && included.every((s) => historyStates[s.id]?.result?.coverage.complete && !historyStates[s.id]?.error);
   const historyIncomplete = included.some((s) =>
-    states[s.id]?.result?.warnings.includes("archive_required"),
+    historyStates[s.id]?.result?.warnings.includes("archive_required"),
   );
   const found = totals(available) as FeeRow[],
     paid = totals(claimed) as FeeRow[];
   const pct = included.length
-    ? included.reduce((n, s) => n + (states[s.id]?.result?.coverage.percent ?? 0), 0) /
+    ? included.reduce((n, s) => n + (scanStates[s.id]?.result?.coverage.percent ?? 0), 0) /
       included.length
     : 0;
   const snapshots = included.flatMap((s) =>
@@ -434,8 +463,8 @@ export default function Home() {
         <div className="terminal-frame">
           <aside className="terminal-rail" aria-label="Workspace navigation">
             <a className="rail-item active" href="#harvest" aria-label="Overview"><LayoutGrid size={18} /></a>
-            <a className="rail-item" href="#fees" aria-label="Available fees" onClick={() => setActiveTab("unclaimed")}><Wallet size={18} /></a>
-            <a className="rail-item" href="#fees" aria-label="Payout history" onClick={() => setActiveTab("history")}><History size={18} /></a>
+            <a className="rail-item" href="#fees" aria-label="Available fees" onClick={() => changeTab("unclaimed")}><Wallet size={18} /></a>
+            <a className="rail-item" href="#fees" aria-label="Payout history" onClick={() => changeTab("history")}><History size={18} /></a>
             <button className="rail-item" aria-label="Reviewed sources" onClick={() => setInfo(true)}><ShieldCheck size={18} /></button>
             <span className="rail-caption">YOUR FEES. YOUR CALL.</span>
             <button className="rail-item rail-help" aria-label="Coverage details" onClick={() => setInfo(true)}><CircleHelp size={18} /></button>
@@ -455,7 +484,7 @@ export default function Home() {
           <section className="summary-grid" aria-label="Wallet summary">
             <Summary
               label="AVAILABLE TO HARVEST"
-              onViewAvailable={() => setActiveTab("unclaimed")}
+              onViewAvailable={() => changeTab("unclaimed")}
               values={found}
               wallet={wallet}
               helper={
@@ -469,12 +498,15 @@ export default function Home() {
             />
             <Summary
               label="CLAIMED TO DATE"
+              emptyLabel={!Object.keys(historyStates).length ? "Not loaded" : "None found"}
               values={paid}
               wallet={wallet}
               helper={
                 !wallet
                   ? "Confirmed payout history"
-                  : complete && !historyIncomplete
+                  : !Object.keys(historyStates).length
+                    ? "Open Payout history to load past claims"
+                  : historyComplete && !historyIncomplete
                     ? "Verified history across scanned contracts"
                     : "Verified payouts found so far"
               }
@@ -482,7 +514,7 @@ export default function Home() {
             />
             <div className="summary-card">
               <span className="summary-label">
-                SCAN COVERAGE
+                {activeTab === "history" ? "HISTORY COVERAGE" : "FEE DISCOVERY"}
                 <Radar size={17} />
               </span>
               <div className="summary-value">
@@ -494,7 +526,7 @@ export default function Home() {
               </div>
               <p>
                 {wallet
-                  ? `${included.length} source groups · ${included.reduce((n, s) => n + (states[s.id]?.pages ?? 0), 0)} pages checked`
+                  ? `${included.length} source groups · ${included.reduce((n, s) => n + (scanStates[s.id]?.pages ?? 0), 0)} pages checked`
                   : "Connect your wallet to start scanning"}
               </p>
               <div className="mini-progress">
@@ -538,14 +570,14 @@ export default function Home() {
                   {running
                     ? "Checking a short batch…"
                     : complete
-                      ? "Covered contracts scanned"
+                      ? activeTab === "history" ? "Payout history loaded" : "Available-fee checks complete"
                       : !included.length ? "Choose scan sources" : hasSourceErrors ? "Scan needs attention" : "Scan paused"}
                 </strong>
                 <p>
                   {notice ||
-                    "Balances and payouts use confirmed snapshots. An unfinished scan never means there are no fees."}
+                    (activeTab === "history" ? "Payout history loads in short passes. Continue to check older payouts." : "Available fees use direct contract reads and position discovery. Payout history loads only when opened.")}
                   {` ${available.length} available fee positions · ${claimed.length} verified payouts found.`}
-                  {running && ` ${pct.toFixed(2)}% of event ranges searched · ${included.reduce((n, s) => n + (states[s.id]?.pages ?? 0), 0)} pages checked.`}
+                  {running && ` ${pct.toFixed(2)}% of event ranges searched · ${included.reduce((n, s) => n + (scanStates[s.id]?.pages ?? 0), 0)} pages checked.`}
                 </p>
               </div>
               <div className="scan-actions">
@@ -561,7 +593,7 @@ export default function Home() {
                       title="Refresh all selected sources"
                       aria-label="Refresh all selected sources"
                       disabled={!included.length || claimBusy}
-                      onClick={() => void run(wallet, true)}
+                      onClick={() => void run(wallet, true, undefined, activeTab === "history" ? "history" : "balances")}
                     >
                       <RefreshCw size={16} />
                     </button>
@@ -603,7 +635,7 @@ export default function Home() {
                   role="tab"
                   aria-selected={activeTab === "unclaimed"}
                   className={activeTab === "unclaimed" ? "active" : ""}
-                  onClick={() => setActiveTab("unclaimed")}
+                  onClick={() => changeTab("unclaimed")}
                 >
                   Unclaimed fees<span>{available.length + pending.length}</span>
                 </button>
@@ -611,9 +643,9 @@ export default function Home() {
                   role="tab"
                   aria-selected={activeTab === "history"}
                   className={activeTab === "history" ? "active" : ""}
-                  onClick={() => setActiveTab("history")}
+                  onClick={() => changeTab("history")}
                 >
-                  Payout history<span>{claimed.length}</span>
+                  Payout history<span>{Object.keys(historyStates).length ? claimed.length : "—"}</span>
                 </button>
               </div>
               <div className="table-controls">
@@ -760,14 +792,14 @@ export default function Home() {
                     ? "Your fees are out there."
                     : running
                       ? "Looking for your fees…"
-                      : complete && !historyIncomplete
+                      : complete && (activeTab !== "history" || !historyIncomplete)
                         ? activeTab === "history" ? "No payout history found" : "No unclaimed fees found"
                         : "Nothing found in the pages scanned yet"}
                 </h2>
                 <p>
                   {!wallet
                     ? "Connect your wallet to discover unclaimed fees\nand see your verified payout history."
-                    : complete && !historyIncomplete
+                    : complete && (activeTab !== "history" || !historyIncomplete)
                       ? activeTab === "history" ? "No matching payouts in the covered contracts. Check coverage for excluded routes." : "No positive balances found in the covered contracts. Confirmed claims appear in Payout history."
                       : "Keep scanning to discover older positions. Unread pages and failed reads remain unknown."}
                 </p>
@@ -793,7 +825,7 @@ export default function Home() {
           </section>
           <div className="source-health">
             {included.map((source) => {
-              const state = states[source.id];
+              const state = scanStates[source.id];
               return (
                 <div key={source.id}>
                   <span className={`pad-mark ${source.id}`}>{source.mark}</span>
@@ -803,9 +835,9 @@ export default function Home() {
                       {state?.error
                         ? "Read unavailable"
                         : state?.result?.coverage.complete
-                          ? "Covered history scanned"
+                          ? activeTab === "history" ? "Payout history loaded" : "Fee discovery complete"
                           : state?.result
-                            ? `${state.result.coverage.percent.toFixed(2)}% of history checked`
+                            ? `${state.result.coverage.percent.toFixed(2)}% of ${activeTab === "history" ? "history" : "discovery"} checked`
                             : "Ready to scan"}
                     </small>
                   </div>
@@ -815,7 +847,7 @@ export default function Home() {
             })}
           </div>
           {included.map((source) => {
-            const state = states[source.id];
+            const state = scanStates[source.id];
             return (
               <div key={source.id} className="source-notes">
                 {state?.error && (
@@ -857,7 +889,7 @@ export default function Home() {
 
             <span className="eyebrow">YOUR WALLET</span>
             <h2 id="wallet-title">Connect to find your fees.</h2>
-            <p>Choose an installed wallet to share your account address and start a short fee scan.</p>
+            <p>Choose an installed wallet to share your account address and check available fees. Open Payout history to load past claims.</p>
             {walletOptions.map((option) => <button key={option.id} className="wallet-option" disabled={connecting} onClick={() => void adapter.current?.connect(option)}><Wallet size={20} /><span>{option.rabby ? "Browser wallet" : option.name}<small>{option.rabby ? "Default wallet" : "Detected in your browser"}</small></span><ArrowRight size={16} /></button>)}
             {!walletOptions.length && <p>No browser wallet detected. Open this site in your wallet’s browser or install a compatible browser wallet.</p>}
             {connecting && <p role="status">Approve the connection in your wallet, or cancel below.</p>}
@@ -885,9 +917,7 @@ export default function Home() {
             ))}
             <div className="coverage-footnotes">
               <p>
-                <strong>Scan to completion.</strong> The app pages through logs from deployment to a
-                fixed block with 20 confirmations. Partial scans show only what has been found so
-                far.
+                <strong>Available fees first.</strong> Connecting reads balances and discovers fee positions at a fixed block with 20 confirmations. Past payouts load only when you open Payout history. Each pass stops automatically; Continue scan resumes the selected view. Partial scans show only what has been found so far.
               </p>
               <p>
                 <strong>Available and unswept are separate.</strong> Pending pons fees may need
@@ -924,6 +954,7 @@ function Summary({
   helper,
   icon,
   onViewAvailable,
+  emptyLabel = "None found",
 }: {
   label: string;
   values: FeeRow[];
@@ -931,6 +962,7 @@ function Summary({
   helper: string;
   icon: React.ReactNode;
   onViewAvailable?: () => void;
+  emptyLabel?: string;
 }) {
   return (
     <div className="summary-card">
@@ -942,7 +974,7 @@ function Summary({
         {!wallet ? (
           <span className="muted-number">—</span>
         ) : !values.length ? (
-          <span className="muted-number">None found</span>
+          <span className="muted-number">{emptyLabel}</span>
         ) : (
           values.slice(0, 2).map((row) => <span key={row.currency} title={`${row.raw} raw units · ${row.currency}`}>{row.metadataVerified ? <>{compactAmount(row.raw, row.decimals)} <small>{row.symbol}</small></> : `${row.raw} raw units`}</span>)
         )}
