@@ -22,6 +22,8 @@ import { claimKey } from "../lib/fees/claim-plan.mjs";
 import { WalletAdapter } from "../lib/wallet/adapter.mjs";
 import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
 import { compactAmount, mergeRows, totals } from "../lib/fees/model.mjs";
+const SCAN_PASS_REQUESTS = 6;
+const SCAN_PASS_DURATION = 20_000;
 type WalletOption = { id: string; name: string; rabby: boolean; provider: { request: (input: { method: string }) => Promise<unknown> } };
 type WalletEvent =
   | { type: "providers"; options: WalletOption[] }
@@ -146,7 +148,7 @@ export default function Home() {
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
   const [walletMenu, setWalletMenu] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [connectionNotice, setConnectionNotice] = useState("Connect your wallet to start an automatic fee scan.");
+  const [connectionNotice, setConnectionNotice] = useState("Connect your wallet for a short fee scan. Continue only when you choose.");
   const [selected, setSelected] = useState(new Set(SOURCE_INFO.map((s) => s.id))),
     [states, setStates] = useState<Record<string, SourceState>>({});
   const [activeTab, setActiveTab] = useState("unclaimed"),
@@ -184,7 +186,7 @@ export default function Home() {
           seeded[row.source] = source;
         }
         publish(seeded);
-        void run(address, false, Number.POSITIVE_INFINITY, confirmation.snapshotCursor);
+        void run(address, false, confirmation.snapshotCursor);
       },
     });
     claims.current = claimController;
@@ -197,7 +199,7 @@ export default function Home() {
         setWallet("");
         setWalletName(event.name);
         setConnecting(true);
-        setConnectionNotice(`Approve the connection in ${event.name}. Your fee scan will start automatically.`);
+        setConnectionNotice(`Approve the connection in ${event.name}. A short fee scan will start automatically.`);
       } else if (event.type === "connected") {
         stop();
         publish({});
@@ -206,7 +208,7 @@ export default function Home() {
         setConnecting(false);
         setWalletMenu(false);
         setFilter("all");
-        setConnectionNotice(`${event.switched ? "Account changed" : `${event.name} connected`}. Your selected sources are checked automatically.`);
+        setConnectionNotice(`${event.switched ? "Account changed" : `${event.name} connected`}. Each scan checks a short batch, then pauses for you to continue.`);
         if (selectedRef.current.size) void run(event.address, true);
         else setNotice("Choose at least one scan source to start checking fees.");
       } else {
@@ -241,7 +243,7 @@ export default function Home() {
     latest.current = next;
     setStates(next);
   }
-  async function run(address: string, fresh = false, budget = Number.POSITIVE_INFINITY, anchor?: string) {
+  async function run(address: string, fresh = false, anchor?: string) {
     stop();
     const token = generation.current;
     active.current = true;
@@ -250,20 +252,27 @@ export default function Home() {
     let current: Record<string, SourceState> = fresh ? {} : { ...latest.current };
     if (fresh) publish(current);
     const ids = SOURCE_INFO.filter((s) => selectedRef.current.has(s.id)).map((s) => s.id);
-    let page = 0;
+    let requests = 0;
+    let timedOut = false;
+    const deadline = Date.now() + SCAN_PASS_DURATION;
+    const timeout = setTimeout(() => {
+      if (token === generation.current && active.current) {
+        timedOut = true;
+        controller.current?.abort();
+      }
+    }, SCAN_PASS_DURATION);
+    const withinBudget = () => !timedOut && requests < SCAN_PASS_REQUESTS && Date.now() < deadline;
     try {
-      while (active.current && token === generation.current && page < budget) {
+      while (active.current && token === generation.current && withinBudget()) {
         let didWork = false;
         for (const id of ids) {
-          if (!active.current || token !== generation.current) break;
+          if (!active.current || token !== generation.current || !withinBudget()) break;
           const existing = current[id];
           if (existing?.result?.coverage.complete || existing?.error) continue;
           didWork = true;
+          requests++;
           const coverage = existing?.result?.coverage;
-          const progress = coverage?.blocksTotal
-            ? ` ${coverage.blocksChecked?.toLocaleString() ?? 0} of ${coverage.blocksTotal.toLocaleString()} contract-blocks searched.`
-            : " Reading wallet balances and historical events.";
-          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}.${progress}${coverage?.pending ? ` ${coverage.pending} candidate records awaiting verification.` : ""}`);
+          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}. This pass stops after ${SCAN_PASS_REQUESTS} pages or ${SCAN_PASS_DURATION / 1000} seconds.${coverage?.pending ? ` ${coverage.pending} candidate records awaiting verification.` : ""}`);
           controller.current = new AbortController();
           try {
             const response = await fetch("/api/scan", {
@@ -281,7 +290,7 @@ export default function Home() {
               cache: "no-store",
             });
             const data = (await response.json()) as Result & { error: string };
-            if (token !== generation.current || !active.current) break;
+            if (token !== generation.current || !active.current || timedOut) break;
             if (!response.ok) {
               current = {
                 ...current,
@@ -311,7 +320,7 @@ export default function Home() {
             };
             publish(current);
           } catch {
-            if (token !== generation.current || !active.current) break;
+            if (token !== generation.current || !active.current || timedOut) break;
             current = {
               ...current,
               [id]: {
@@ -326,8 +335,7 @@ export default function Home() {
           }
         }
         if (!didWork) break;
-        page++;
-        if (active.current && page < budget)
+        if (active.current && withinBudget())
           await new Promise((resolve) => setTimeout(resolve, 350));
       }
       if (active.current && token === generation.current) {
@@ -337,9 +345,10 @@ export default function Home() {
           ? "Some sources could not be read. Verified results are kept; unread fees remain unknown. Continue to retry."
           : finished
             ? "Scan complete for the selected contracts. Your available fees and claimed history are ready."
-            : "This scan pass is finished. Continue to discover older positions and payouts.");
+            : "This scan pass is finished. Your results are kept. Choose Continue scan to search more history and positions.");
       }
     } finally {
+      clearTimeout(timeout);
       if (token === generation.current) {
         active.current = false;
         setRunning(false);
@@ -360,7 +369,7 @@ export default function Home() {
     else next.add(id);
     selectedRef.current = next;
     setSelected(next);
-    if (wallet && next.size) void run(wallet);
+    if (wallet && next.size) setNotice("Scan sources updated. Choose Continue scan to check your selection.");
     else if (wallet) { stop(); setNotice("Choose at least one scan source to start checking fees."); }
   }
   const claimBusy = ["preparing", "review", "wallet", "submitted", "confirming", "uncertain"].includes(claimState.phase);
@@ -371,6 +380,7 @@ export default function Home() {
     void claims.current?.begin(row);
   }
   const included = SOURCE_INFO.filter((s) => selected.has(s.id));
+  const hasSourceErrors = included.some((source) => states[source.id]?.error);
   const allBalances = included.flatMap((s) => states[s.id]?.balances ?? []);
   const available = allBalances.filter((r) => r.kind === "available" && BigInt(r.raw) > 0n);
   const pending = allBalances.filter((r) => r.kind !== "available" && BigInt(r.raw) > 0n);
@@ -530,10 +540,10 @@ export default function Home() {
                 <span className={running ? "pulse-dot" : "green-dot"} />
                 <strong>
                   {running
-                    ? "Scanning in the background…"
+                    ? "Checking a short batch…"
                     : complete
                       ? "Covered contracts scanned"
-                      : !included.length ? "Choose scan sources" : "Scan paused or needs attention"}
+                      : !included.length ? "Choose scan sources" : hasSourceErrors ? "Scan needs attention" : "Scan paused"}
                 </strong>
                 <p>
                   {notice ||
