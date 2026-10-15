@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decodeFunctionData, encodeFunctionResult, encodeAbiParameters, encodeEventTopics } from "viem";
+import { decodeFunctionData, encodeFunctionData, encodeFunctionResult, encodeAbiParameters, encodeEventTopics } from "viem";
 import { O1, LONG, LONG_HOOK, PONS, PONS_V1 } from "../lib/fees/catalog.mjs";
 import { o1Current, o1Legacy, longAbi, ponsV1Abi, ponsEscrow } from "../lib/fees/abi.mjs";
 import { NATIVE, poolId } from "../lib/fees/model.mjs";
@@ -23,6 +23,7 @@ function rpcFixture(profile = O1[4]) {
     async verify(target) { state.verified.push(target.id ?? "hook"); },
     async currency(currency) { return { currency, symbol: "TEST", decimals: 18, metadataVerified: true }; },
     async call(target, abi, name, args) {
+      encodeFunctionData({ abi, functionName: name, args });
       state.calls.push(name);
       if (["owed", "balanceOf", "balanceOfToken"].includes(name)) return state.raw;
       if (name === "getState") return [NATIVE, 0n, LONG_HOOK.address, "0x", 2, poolKey, 0];
@@ -160,9 +161,9 @@ async function controllerFixture(sendError) {
   let current = session, confirmation = 0;
   const controller = new ClaimController({ getSession: () => current, notify: (state) => events.push({ ...state }),
     refresh: (result, owner) => refreshes.push({ result, owner }), hashCode: () => O1[4].hash, delay: async () => {},
-    fetcher: async (url) => new Response(JSON.stringify(url.endsWith("prepare") ? quote : confirmation++ === 0
+    fetcher: async function (url) { assert.equal(this, globalThis); return new Response(JSON.stringify(url.endsWith("prepare") ? quote : confirmation++ === 0
       ? { status: "confirming", confirmations: 19 }
-      : { status: "confirmed", history: [{ ...clicked, tx: txHash }], snapshotCursor: "qa.snapshot" }), { headers: { "content-type": "application/json" } }),
+      : { status: "confirmed", history: [{ ...clicked, tx: txHash }], snapshotCursor: "qa.snapshot" }), { headers: { "content-type": "application/json" } }); },
   });
   return { controller, events, refreshes, calls, clicked, changeAccount: () => { current = { ...session, address: pair }; controller.contextChanged(); } };
 }
