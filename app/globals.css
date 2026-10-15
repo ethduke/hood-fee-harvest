@@ -102,7 +102,7 @@ main { min-width: 0; flex: 1; padding: 37px 40px 0; }
 .scan-strip strong, .claim-status strong { font-size: 12px; font-weight: 600; line-height: 1.5; }
 .scan-strip p, .claim-status p { font-size: 11px; line-height: 1.75; color: var(--muted); margin: 6px 0 0; max-width: 750px; }
 .pulse-dot { animation: pulse 1.5s infinite; }
-.scan-actions { display: flex; gap: 12px; align-items: center; flex-shrink: 0; }
+.scan-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; flex-shrink: 0; }
 .primary-button { display: inline-flex; justify-content: center; align-items: center; gap: 12px; background: var(--ink); color: var(--green); border: 1px solid var(--ink); border-radius: 7px; padding: 13px 18px; font-size: 12px; font-weight: 500; }
 .primary-button:hover:not(:disabled) { background: #3c472c; transform: translateY(-2px); }
 .secondary-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; padding: 10px 13px; border: 1px solid #424c37; border-radius: 6px; background: var(--white); color: var(--forest); font-size: 11px; white-space: nowrap; }

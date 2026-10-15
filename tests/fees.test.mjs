@@ -122,6 +122,9 @@ test("public safety guard blocks prohibited files, logging and raw captures", ()
   assert.ok(checkBlob("app/page.tsx", Buffer.from("console.log(data)")).length);
   assert.ok(checkBlob("capture.json", Buffer.from(wallet)).length);
   assert.ok(checkBlob("logs/service.log", Buffer.from("text")).length);
+  assert.ok(checkBlob("app/page.tsx", Buffer.from("localStorage.setItem(key, value)")).length);
+  assert.equal(checkBlob("lib/wallet/scan-cache.mjs", Buffer.from("localStorage.setItem(key, value)")).length, 0);
+  assert.ok(checkBlob("lib/wallet/scan-cache.mjs", Buffer.from("console.log(data)")).length);
   assert.equal(checkBlob("lib/fees/catalog.mjs", Buffer.from(O1[0].address)).length, 0);
 });
 test("failed reads remain errors, not empty successful results", async () => {

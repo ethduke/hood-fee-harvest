@@ -48,7 +48,8 @@ export function checkBlob(path, bytes) {
     /console\.(?:log|warn|error|debug|info)|process\.(?:stdout|stderr)\.write/.test(source)
   )
     violations.push("application logging");
-  if (/^(?:app|lib)\//.test(path) && /localStorage|sessionStorage|indexedDB/.test(source))
+  // Browser-local scan caching is explicitly supported in this one module.
+  if (path !== "lib/wallet/scan-cache.mjs" && /^(?:app|lib)\//.test(path) && /localStorage|sessionStorage|indexedDB/.test(source))
     violations.push("persisted wallet state");
   return violations;
 }

@@ -13,6 +13,7 @@ import {
   Pause,
   X,
   RefreshCw,
+  RotateCcw,
   Radar,
   LayoutGrid,
   CircleHelp,
@@ -20,6 +21,7 @@ import {
 import { ClaimController } from "../lib/wallet/claims.mjs";
 import { claimKey } from "../lib/fees/claim-plan.mjs";
 import { WalletAdapter } from "../lib/wallet/adapter.mjs";
+import { ScanCache } from "../lib/wallet/scan-cache.mjs";
 import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
 import { compactAmount, mergeRows, totals } from "../lib/fees/model.mjs";
 const SCAN_PASS_REQUESTS = 6;
@@ -154,6 +156,10 @@ export default function Home() {
   const [historyStates, setHistoryStates] = useState<Record<string, SourceState>>({});
   const historyLatest = useRef<Record<string, SourceState>>({});
   const historyStarted = useRef(false);
+  const cache = useRef<ScanCache | null>(null);
+  const cacheAddress = useRef("");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [storageError, setStorageError] = useState(false);
   const [activeTab, setActiveTab] = useState("unclaimed"),
     [running, setRunning] = useState(false),
     [info, setInfo] = useState(false),
@@ -177,6 +183,7 @@ export default function Home() {
     setRunning(false);
   }
   useEffect(() => {
+    cache.current = new ScanCache(window);
     const claimController = new ClaimController({
       getSession: () => adapter.current?.session,
       notify: (state: ClaimState) => setClaimState(state),
@@ -200,6 +207,10 @@ export default function Home() {
     const connection = new WalletAdapter(window, (event: WalletEvent) => {
       if (event.type === "providers") { setWalletOptions(event.options); return; }
       claimController.contextChanged();
+      stop();
+      cacheAddress.current = "";
+      setSavedAt(null);
+      setStorageError(false);
       publish({}, "history");
       historyStarted.current = false;
       setActiveTab("unclaimed");
@@ -212,12 +223,25 @@ export default function Home() {
       } else if (event.type === "connected") {
         stop();
         publish({});
+        const saved = cache.current?.load(event.address);
+        cacheAddress.current = event.address;
         setWallet(event.address);
         setConnecting(false);
         setWalletMenu(false);
         setFilter("all");
-        setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Checking available fees first. Open Payout history to load past claims.`);
-        if (selectedRef.current.size) void run(event.address, true);
+        if (saved) {
+          selectedRef.current = new Set(saved.selected as string[]);
+          setSelected(new Set(saved.selected as string[]));
+          historyStarted.current = saved.historyStarted;
+          publish(saved.balances as Record<string, SourceState>, "balances", false);
+          publish(saved.history as Record<string, SourceState>, "history", false);
+          setSavedAt(saved.savedAt);
+          setConnectionNotice("Saved scan restored from this browser. Continue scan resumes your progress; Refresh checks a new balance snapshot.");
+          setNotice("Saved results restored. Scanning is paused. Payout history stays on demand.");
+        } else if (selectedRef.current.size) {
+          setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Checking available fees first. Open Payout history to load past claims.`);
+          void run(event.address, true);
+        }
         else setNotice("Choose at least one scan source to start checking fees.");
       } else {
         stop();
@@ -225,7 +249,7 @@ export default function Home() {
         setWallet("");
         setConnecting(false);
         setNotice("");
-        setConnectionNotice(event.type === "error" ? walletErrors[event.code] ?? walletErrors.unavailable : "Wallet disconnected. Scanning stopped and results cleared.");
+        setConnectionNotice(event.type === "error" ? walletErrors[event.code] ?? walletErrors.unavailable : "Wallet disconnected. Scanning stopped; saved progress stays in this browser.");
       }
     });
     adapter.current = connection;
@@ -246,7 +270,16 @@ export default function Home() {
     if (preferred) void adapter.current?.connect(preferred);
     else setWalletMenu(true);
   }
-  function publish(next: Record<string, SourceState>, scope: ScanScope = "balances") {
+  function saveProgress() {
+    if (!cacheAddress.current) return;
+    const time = cache.current?.save(cacheAddress.current, {
+      balances: latest.current, history: historyLatest.current,
+      selected: [...selectedRef.current], historyStarted: historyStarted.current,
+    });
+    setStorageError(!time);
+    if (time) setSavedAt(time);
+  }
+  function publish(next: Record<string, SourceState>, scope: ScanScope = "balances", persist = true) {
     if (scope === "history") {
       historyLatest.current = next;
       setHistoryStates(next);
@@ -254,6 +287,7 @@ export default function Home() {
       latest.current = next;
       setStates(next);
     }
+    if (persist) saveProgress();
   }
   async function run(address: string, fresh = false, anchor?: string, scope: ScanScope = "balances") {
     stop();
@@ -392,8 +426,24 @@ export default function Home() {
     else next.add(id);
     selectedRef.current = next;
     setSelected(next);
+    saveProgress();
     if (wallet && next.size) setNotice("Scan sources updated. Choose Continue scan to check your selection.");
     else if (wallet) { stop(); setNotice("Choose at least one scan source to start checking fees."); }
+  }
+  function resetScan() {
+    stop();
+    claims.current?.cancel();
+    cacheAddress.current = "";
+    publish({});
+    publish({}, "history");
+    historyStarted.current = false;
+    const removed = cache.current?.remove(wallet);
+    cacheAddress.current = wallet;
+    setSavedAt(null);
+    setStorageError(!removed);
+    setActiveTab("unclaimed");
+    setConnectionNotice("Local scan progress reset. Available fees will be checked first; payout history stays on demand.");
+    setNotice("Scan progress cleared. Choose Continue scan to start again.");
   }
   const claimBusy = ["preparing", "review", "wallet", "submitted", "confirming", "uncertain"].includes(claimState.phase);
   function beginClaim(row: FeeRow) {
@@ -578,9 +628,13 @@ export default function Home() {
                     (activeTab === "history" ? "Payout history loads in short passes. Continue to check older payouts." : "Available fees use direct contract reads and position discovery. Payout history loads only when opened.")}
                   {` ${available.length} available fee positions · ${claimed.length} verified payouts found.`}
                   {running && ` ${pct.toFixed(2)}% of event ranges searched · ${included.reduce((n, s) => n + (scanStates[s.id]?.pages ?? 0), 0)} pages checked.`}
+                  {storageError ? " Browser storage is unavailable. Progress may not survive a refresh." : savedAt ? " Saved in this browser. Results reflect their scan snapshot; Refresh checks current balances." : ""}
                 </p>
               </div>
               <div className="scan-actions">
+                <button className="secondary-button" disabled={claimBusy} onClick={resetScan}>
+                  <RotateCcw size={14} />Reset scan
+                </button>
                 {running ? (
                   <button className="secondary-button" onClick={() => { stop(); setNotice("Scan paused. Your verified results are kept. Continue whenever you are ready."); }}>
                     <Pause size={14} />
@@ -925,9 +979,7 @@ export default function Home() {
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Your query isn’t saved.</strong> No wallet address in URLs, browser storage,
-                application logs, analytics or a database. Queries are sent to the chain provider.
-                Hosting logs depend on the operator’s settings.
+                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in URLs, application logs, analytics or a database. Chain queries go to the provider; hosting logs depend on the operator’s settings. Saved snapshots can become outdated, and expired cursors require a fresh scan.
               </p>
               <p>
                 <strong>More adapters come later.</strong> Bags, Flap, pools.trade, PAIR and other
