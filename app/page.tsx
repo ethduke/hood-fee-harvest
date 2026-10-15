@@ -144,7 +144,6 @@ export default function Home() {
   const [wallet, setWallet] = useState("");
   const [claimState, setClaimState] = useState<ClaimState>({ phase: "idle" });
   const claims = useRef<ClaimController | null>(null);
-  const [walletName, setWalletName] = useState("");
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
   const [walletMenu, setWalletMenu] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -197,25 +196,22 @@ export default function Home() {
         stop();
         publish({});
         setWallet("");
-        setWalletName(event.name);
         setConnecting(true);
-        setConnectionNotice(`Approve the connection in ${event.name}. A short fee scan will start automatically.`);
+        setConnectionNotice("Approve the connection in your wallet. A short fee scan will start automatically.");
       } else if (event.type === "connected") {
         stop();
         publish({});
         setWallet(event.address);
-        setWalletName(event.name);
         setConnecting(false);
         setWalletMenu(false);
         setFilter("all");
-        setConnectionNotice(`${event.switched ? "Account changed" : `${event.name} connected`}. Each scan checks a short batch, then pauses for you to continue.`);
+        setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Each scan checks a short batch, then pauses for you to continue.`);
         if (selectedRef.current.size) void run(event.address, true);
         else setNotice("Choose at least one scan source to start checking fees.");
       } else {
         stop();
         publish({});
         setWallet("");
-        setWalletName("");
         setConnecting(false);
         setNotice("");
         setConnectionNotice(event.type === "error" ? walletErrors[event.code] ?? walletErrors.unavailable : "Wallet disconnected. Scanning stopped and results cleared.");
@@ -427,7 +423,7 @@ export default function Home() {
               <button ref={connectRef} className="wallet-connect" disabled={connecting}
                 onClick={() => wallet ? setWalletMenu(true) : connectDefault()}>
                 {connecting ? <span className="spinner" /> : <Wallet size={16} />}
-                <span>{connecting ? "Connecting…" : wallet ? `${walletName} · ${short(wallet)}` : "Connect Rabby"}</span>
+                <span>{connecting ? "Connecting…" : wallet ? short(wallet) : "Connect wallet"}</span>
               </button>
               <button className="wallet-choose" aria-label="Choose wallet or disconnect" onClick={() => setWalletMenu(true)}>
                 <ChevronDown size={14} />
@@ -586,7 +582,7 @@ export default function Home() {
                 ? "A claim for the previous account is still being tracked."
                 : claimState.phase === "preparing" ? "Checking your claim…"
                 : claimState.phase === "review" ? "Your claim is ready to review."
-                : claimState.phase === "wallet" ? `Confirm the transaction in ${walletName || "your wallet"}.`
+                : claimState.phase === "wallet" ? "Confirm the transaction in your wallet."
                 : claimState.phase === "submitted" ? "Claim submitted. Waiting for it to be mined."
                 : claimState.phase === "confirming" ? `Claim mined. Confirming onchain · ${claimState.confirmations ?? 0}/20 blocks.`
                 : claimState.phase === "confirmed" ? running ? "Claim confirmed. Refreshing your balances and payout history." : complete ? "Claim confirmed. Balances and payout history refreshed." : "Claim confirmed. Your payout is recorded; check the scan status for remaining reads."
@@ -777,7 +773,7 @@ export default function Home() {
                 </p>
                 {!wallet && (
                   <button className="primary-button" onClick={connectDefault} disabled={connecting}>
-                    Connect Rabby
+                    Connect wallet
                     <ArrowUpRight size={13} />
                   </button>
                 )}
@@ -853,7 +849,7 @@ export default function Home() {
           <p>Recipient: <span className="mono">{short(claimState.quote.address)}</span><br />Network: Robinhood Chain</p>
           <a className="text-button" href={explorer("address", claimState.quote.target)} target="_blank" rel="noreferrer">View claim contract <ArrowUpRight size={13} /></a>
           <p>The claim was simulated. Amounts can change before mining. You pay network gas in ETH; your wallet shows the final gas fee. No token approval is requested.</p>
-          <button className="primary-button" onClick={() => void claims.current?.send()}>Confirm in {walletName || "wallet"}<ArrowUpRight size={15} /></button>
+          <button className="primary-button" onClick={() => void claims.current?.send()}>Confirm in wallet<ArrowUpRight size={15} /></button>
         </WalletDialog>
       )}
       {walletMenu && (
@@ -861,11 +857,10 @@ export default function Home() {
 
             <span className="eyebrow">YOUR WALLET</span>
             <h2 id="wallet-title">Connect to find your fees.</h2>
-            <p>Rabby is the default. Choose an installed wallet to share your account address and start scanning automatically.</p>
-            {!walletOptions.some((option) => option.rabby) && <a className="wallet-option" href="https://rabby.io/" target="_blank" rel="noreferrer"><Wallet size={20} /><span>Get Rabby<small>Install the wallet, then reload this page.</small></span><ArrowUpRight size={16} /></a>}
-            {walletOptions.map((option) => <button key={option.id} className="wallet-option" disabled={connecting} onClick={() => void adapter.current?.connect(option)}><Wallet size={20} /><span>{option.name}<small>{option.rabby ? "Default wallet" : "Detected in your browser"}</small></span><ArrowRight size={16} /></button>)}
-            {!walletOptions.length && <p>No browser wallet detected. Open this site in your wallet’s browser or install Rabby.</p>}
-            {connecting && <p role="status">Approve the connection in {walletName}, or cancel below.</p>}
+            <p>Choose an installed wallet to share your account address and start a short fee scan.</p>
+            {walletOptions.map((option) => <button key={option.id} className="wallet-option" disabled={connecting} onClick={() => void adapter.current?.connect(option)}><Wallet size={20} /><span>{option.rabby ? "Browser wallet" : option.name}<small>{option.rabby ? "Default wallet" : "Detected in your browser"}</small></span><ArrowRight size={16} /></button>)}
+            {!walletOptions.length && <p>No browser wallet detected. Open this site in your wallet’s browser or install a compatible browser wallet.</p>}
+            {connecting && <p role="status">Approve the connection in your wallet, or cancel below.</p>}
             {(wallet || connecting) && <button className="secondary-button" onClick={() => { adapter.current?.disconnect(); setWalletMenu(false); }}>{connecting ? "Cancel connection" : "Disconnect wallet"}</button>}
             <p className="wallet-readonly"><ShieldCheck size={14} />Connection shares your address. Each claim requires wallet confirmation.</p>
         </WalletDialog>
