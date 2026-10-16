@@ -18,7 +18,7 @@ function progress() {
   const row = {id:"native", source:"o1", target:O1[0].id, currency:NATIVE, raw:"12", symbol:"ETH", decimals:18, metadataVerified:true, kind:"available", claimHandle:"fixture.handle"};
   const state = (scope) => ({pages:2, balances:scope === "balances" ? [row] : [], history:[], result:{
     source:"o1", scope, snapshot:{number:100,hash:`0x${"33".repeat(32)}`}, snapshotCursor:"fixture.snapshot",
-    cursor:`fixture.${scope}`, coverage:{complete:false,percent:20,pending:0},warnings:[],
+    cursor:`fixture.${scope}`, checkpoint:`durable.${scope}`, coverage:{complete:false,percent:20,pending:0},warnings:[],
   }});
   return {balances:{o1:state("balances")},history:{o1:state("history")},selected:["o1","pons"],historyStarted:true};
 }
